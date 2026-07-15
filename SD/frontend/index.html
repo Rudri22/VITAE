@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VITAE</title>
+    <link rel="stylesheet" href="styles.css?v=map-popup-1">
+  </head>
+  <body>
+    <main id="loginView" class="login-shell" hidden>
+      <section class="login-card">
+        <div class="login-brand">
+          <div class="brand-mark">+</div>
+          <div>
+            <strong>VITAE</strong>
+            <span>Secure Health Supply Network</span>
+          </div>
+        </div>
+        <h1>Sign in</h1>
+        <p>Use your assigned account to open the correct workspace.</p>
+        <div class="demo-credentials">
+          <strong>Demo accounts</strong>
+          <span>admin / admin123</span>
+          <span>support / support123</span>
+          <span>hospitalA / hospitalA123</span>
+          <span>hospitalB / hospitalB123</span>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>
+            <span>Email or username</span>
+            <input name="username" autocomplete="username" required>
+          </label>
+          <label>
+            <span>Password</span>
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <p id="loginError" class="form-error" hidden>Invalid username or password.</p>
+          <button id="loginButton" type="submit">Sign In</button>
+        </form>
+      </section>
+    </main>
+    <main id="deniedView" hidden></main>
+
+    <main id="adminView" class="control-shell" hidden>
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">+</div>
+          <div>
+            <strong>VITAE</strong>
+            <span>Admin Operations Center</span>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="adminHomeButton" type="button">Control Panel</button>
+          <span id="adminLoggedInAs" class="logged-in-label">Logged in as Admin</span>
+          <button data-logout type="button">Logout</button>
+          <div>
+            <strong id="adminCurrentTime">--:--</strong>
+            <span id="adminCurrentDate">--</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="hero-panel admin-hero">
+        <span class="eyebrow">Main Control Panel</span>
+        <h1>Platform Operations Center</h1>
+        <p>Open a module to manage hospitals, users, supplies, emergencies, transfers, alerts, settings, logs, or live monitoring.</p>
+      </section>
+
+      <section id="adminHomeView">
+        <section class="status-strip">
+          <article><span>Hospitals Online</span><strong id="hospitalsOnline">0</strong></article>
+          <article><span>Active Emergencies</span><strong id="activeEmergencies">0</strong></article>
+          <article><span>Pending Requests</span><strong id="pendingRequests">0</strong></article>
+          <article><span>Active Transfers</span><strong id="activeTransfers">0</strong></article>
+        </section>
+        <section id="adminModules" class="module-grid">
+          <article class="module-card">
+            <div class="module-icon">+</div>
+            <div>
+              <h3>Loading Control Panel</h3>
+              <p>If this stays visible, use the local server URL: http://127.0.0.1:8000/admin</p>
+            </div>
+          </article>
+        </section>
+      </section>
+
+      <section id="adminModuleView" class="module-workspace" hidden>
+        <header class="workspace-header">
+          <button id="adminBackButton" type="button">Back</button>
+          <div>
+            <span id="adminModuleEyebrow" class="eyebrow">Module</span>
+            <h2 id="adminModuleTitle">Module</h2>
+            <p id="adminModuleDescription">Open module tools.</p>
+          </div>
+        </header>
+        <div id="adminModuleContent" class="workspace-content"></div>
+      </section>
+    </main>
+
+    <main id="supportView" class="support-app" hidden>
+      <aside class="support-sidebar">
+        <div class="brand compact">
+          <div class="brand-mark hospital-mark">+</div>
+          <div>
+            <strong>VITAE</strong>
+            <span>Support</span>
+          </div>
+        </div>
+        <nav aria-label="Support navigation">
+          <button data-support-page="dashboard" type="button">Dashboard</button>
+          <button data-support-page="cases" type="button">Cases</button>
+          <button data-support-page="transfers" type="button">Transfers</button>
+          <button data-support-page="shipments" type="button">Shipments</button>
+          <button data-support-page="shared" type="button">Shared Requests</button>
+          <button data-support-page="alerts" type="button">Alerts</button>
+          <button data-support-page="reports" type="button">Reports</button>
+        </nav>
+      </aside>
+
+      <section class="support-main">
+        <header class="support-header">
+          <div>
+            <h1>Support Coordination Center</h1>
+            <p>Review shared needs, match hospitals, coordinate transfers, and monitor urgent alerts.</p>
+          </div>
+          <div class="top-actions">
+            <span id="supportLoggedInAs" class="logged-in-label">Logged in as Support</span>
+            <button data-logout type="button">Logout</button>
+            <div>
+              <strong id="supportCurrentTime">--:--</strong>
+              <span id="supportCurrentDate">--</span>
+            </div>
+          </div>
+        </header>
+        <div id="supportContent" class="support-content"></div>
+      </section>
+    </main>
+
+    <main id="hospitalView" class="hms-app" hidden>
+      <aside class="hms-sidebar">
+        <div class="brand compact">
+          <div class="brand-mark hospital-mark">+</div>
+          <div>
+            <strong id="hospitalName">Hospital</strong>
+            <span>HMS Workspace</span>
+          </div>
+        </div>
+        <nav aria-label="Hospital navigation">
+          <button data-hospital-module="dashboard" type="button">Dashboard</button>
+          <button data-hospital-module="inventory" type="button">Inventory</button>
+          <button data-hospital-module="requests" type="button">Requests</button>
+          <button data-hospital-module="transfers" type="button">Transfers</button>
+          <button data-hospital-module="shipments" type="button">Shipments</button>
+          <button data-hospital-module="notifications" type="button">Notifications</button>
+          <button data-hospital-module="reports" type="button">Reports</button>
+          <button data-hospital-module="staff" type="button">Hospital Team</button>
+          <button data-hospital-module="profile" type="button">Profile</button>
+          <button data-hospital-module="privacy" type="button">Settings</button>
+        </nav>
+      </aside>
+
+      <section class="hms-main">
+        <header class="hms-header">
+          <div>
+            <h1 id="hospitalPageTitle">Dashboard</h1>
+            <p id="hospitalPageSubtitle">What requires attention today?</p>
+          </div>
+          <div class="top-actions">
+            <span id="hospitalLoggedInAs" class="logged-in-label">Logged in as Hospital</span>
+            <button data-logout type="button">Logout</button>
+            <div>
+              <strong id="hospitalCurrentTime">--:--</strong>
+              <span id="hospitalCurrentDate">--</span>
+            </div>
+          </div>
+        </header>
+        <div id="hospitalContent" class="hms-content"></div>
+      </section>
+    </main>
+
+    <script>
+      window.GOOGLE_MAPS_API_KEY = "";
+    </script>
+    <script src="services/shipmentApi.js?v=map-popup-1"></script>
+    <script src="components/shipment/liveShipmentDashboard.js?v=map-popup-1"></script>
+    <script src="app.js?v=map-popup-1"></script>
+  </body>
+</html>
