@@ -10,7 +10,7 @@ def calculate_risk(shipment, reading):
 
     if min_temp is not None and max_temp is not None and (temperature < min_temp or temperature > max_temp):
         score += 60
-        reasons.append("Temperature is outside the safe medicine range")
+        reasons.append("Temperature is outside the product storage range")
     elif min_temp is None or max_temp is None:
         reasons.append("Safe temperature range was not provided for this shipment")
 

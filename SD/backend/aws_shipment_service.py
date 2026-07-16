@@ -12,7 +12,7 @@ except ImportError:
     from storage import ORGANIZATIONS, SHIPMENTS, shipment_monitor_record
 
 
-ACTIVE_STATUSES = {"active", "in_transit", "at_risk", "delayed", "pending"}
+ACTIVE_STATUSES = {"active", "in_transit", "at_risk", "delayed", "arrived"}
 
 
 class ShipmentServiceError(RuntimeError):
@@ -22,10 +22,11 @@ class ShipmentServiceError(RuntimeError):
 def get_live_shipments_for_user(user):
     """Read live shipment rows from DynamoDB and scope them by role."""
     role = (user or {}).get("role")
-    hospital_id = (user or {}).get("organizationId")
+    organization_id = (user or {}).get("organizationId")
+    driver_id = (user or {}).get("driverId")
 
-    if role not in ["hospital", "support"]:
-        raise PermissionError("Shipment monitoring is only available to hospital and support users")
+    if role not in ["hospital", "organization_user", "driver", "support"]:
+        raise PermissionError("Shipment monitoring is not available for this role")
 
     records = read_shipments_from_dynamodb()
     if records is None:
@@ -38,8 +39,10 @@ def get_live_shipments_for_user(user):
         or str(record.get("alertLevel") or "").lower() in ["warning", "high", "critical"]
     ]
 
-    if role == "hospital":
-        active_records = [record for record in active_records if record.get("hospitalId") == hospital_id]
+    if role in ["hospital", "organization_user"]:
+        active_records = [record for record in active_records if record.get("hospitalId") == organization_id]
+    if role == "driver":
+        active_records = [record for record in active_records if record.get("driverId") == driver_id]
 
     return {
         "shipments": active_records,
@@ -89,17 +92,30 @@ def normalize_live_shipment(record):
 
     return {
         "shipmentId": record.get("shipmentId") or record.get("id"),
+        "driverId": record.get("driverId"),
+        "driverName": record.get("driverName"),
         "hospitalId": hospital_id,
         "hospitalName": record.get("hospitalName") or record.get("destinationHospitalName"),
+        "origin": record.get("origin"),
+        "destinationHospitalName": record.get("destinationHospitalName") or record.get("hospitalName"),
         "currentLocation": record.get("currentLocation") or "Location unavailable",
         "latitude": latitude,
         "longitude": longitude,
+        "currentGps": {"lat": latitude, "lng": longitude} if latitude is not None and longitude is not None else None,
         "destinationLatitude": as_float(record.get("destinationLatitude") or destination_gps.get("lat")),
         "destinationLongitude": as_float(record.get("destinationLongitude") or destination_gps.get("lng")),
         "containerTemperature": as_float(record.get("containerTemperature") or record.get("temperature")),
+        "temperature": as_float(record.get("containerTemperature") or record.get("temperature")),
+        "safeTemperatureMin": as_float(record.get("safeTemperatureMin")),
+        "safeTemperatureMax": as_float(record.get("safeTemperatureMax")),
         "coolingBatteryHealth": as_float(record.get("coolingBatteryHealth") or record.get("batteryLevel")),
+        "batteryLevel": as_float(record.get("coolingBatteryHealth") or record.get("batteryLevel")),
+        "sensorStatus": record.get("sensorStatus") or record.get("coolingUnitStatus"),
         "shipmentStatus": status,
+        "status": status,
         "alertLevel": alert_level,
+        "riskLevel": alert_level,
+        "expectedArrival": record.get("expectedArrival"),
         "lastUpdated": record.get("lastUpdated") or record.get("updatedAt"),
     }
 

@@ -32,7 +32,7 @@
         <header>
           <div>
             <strong>${escapeHtmlLocal(shipment.shipmentId || "Shipment")}</strong>
-            <span>${escapeHtmlLocal(shipment.hospitalName || shipment.hospitalId || "Hospital")}</span>
+            <span>${escapeHtmlLocal(shipment.hospitalName || shipment.hospitalId || "Destination organization")}</span>
           </div>
           <span class="alert-chip">${escapeHtmlLocal(shipment.alertLevel || "low")}</span>
         </header>

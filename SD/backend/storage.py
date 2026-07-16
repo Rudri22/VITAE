@@ -1,4 +1,6 @@
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from secrets import randbelow
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -17,27 +19,35 @@ SHIPMENTS = {
         "safeTemperatureMin": 2,
         "safeTemperatureMax": 8,
         "destination": "Hospital A",
-        "currentLocation": "Beirut coastal route - checkpoint 3",
-        "routeProgress": 68,
-        "status": "at_risk",
-        "temperature": 9.8,
-        "batteryLevel": 42,
-        "coolingUnitStatus": "warning",
-        "lastUpdated": "2026-07-09T08:45:00Z",
-        "riskLevel": "high",
+        "originFacilityId": "facility-a-central",
+        "destinationFacilityId": "facility-a-receiving",
+        "currentLocation": "Central Cold Storage",
+        "routeProgress": 0,
+        "status": "pending",
+        "temperature": 5.0,
+        "batteryLevel": 95,
+        "coolingUnitStatus": "normal",
+        "departureAt": "2026-07-15T10:30:00Z",
+        "expectedArrival": "2026-07-15T11:15:00Z",
+        "lastUpdated": "2026-07-15T10:30:00Z",
+        "riskLevel": "low",
+        "riskClassification": "safe",
         "supplies": ["Insulin - 10 boxes"],
-        "timeline": [
-            {"timestamp": "2026-07-09T08:05:00Z", "label": "Departed Central Cold Storage"},
-            {"timestamp": "2026-07-09T08:45:00Z", "label": "Temperature warning detected"},
-        ],
-        "destinationGps": None,
+        "timeline": [{"timestamp": "2026-07-15T10:30:00Z", "label": "Delivery request sent to Aya Mansour"}],
+        "originGps": {"lat": 33.8797, "lng": 35.5018},
+        "destinationGps": {"lat": 33.8938, "lng": 35.5018},
         "organizationId": "hospital-a",
-        "latestReading": {"temperature": 9.8, "batteryLevel": 42, "gps": {"lat": 33.89, "lng": 35.50}, "timestamp": "2026-07-09T08:45:00Z"},
+        "driverId": "driver-aya",
+        "vehicleId": "van-12",
+        "containerId": "container-12",
+        "sensorId": "sensor-cold-12",
+        "productCategory": "Pharmaceuticals",
+        "latestReading": {"temperature": 5.0, "batteryLevel": 95, "gps": {"lat": 33.8797, "lng": 35.5018}, "timestamp": "2026-07-15T10:30:00Z", "source": "demo_seed"},
         "readings": [],
-        "risk": {"score": 60, "level": "high", "reasons": ["Temperature is outside the safe medicine range"]},
+        "risk": {"score": 0, "level": "low", "reasons": ["Shipment is currently within safe rule limits"]},
         "mlPrediction": None,
         "nearestHospital": None,
-        "alerts": [{"severity": "high", "type": "cold-chain", "message": "Insulin shipment for Hospital A is above safe range"}],
+        "alerts": [],
     },
     "ship-b-220": {
         "shipmentId": "ship-b-220",
@@ -46,8 +56,8 @@ SHIPMENTS = {
         "destinationHospitalId": "hospital-b",
         "destinationHospitalName": "Hospital B",
         "medicineType": "Syringes",
-        "safeTemperatureMin": None,
-        "safeTemperatureMax": None,
+        "safeTemperatureMin": 15,
+        "safeTemperatureMax": 25,
         "destination": "Hospital B",
         "currentLocation": "Mount Lebanon route - 6 km from destination",
         "routeProgress": 82,
@@ -64,6 +74,11 @@ SHIPMENTS = {
         ],
         "destinationGps": None,
         "organizationId": "hospital-b",
+        "driverId": "driver-samir",
+        "vehicleId": "van-22",
+        "containerId": "container-22",
+        "sensorId": "sensor-cold-22",
+        "productCategory": "Medical supplies",
         "latestReading": {"temperature": 22.1, "batteryLevel": 81, "gps": {"lat": 33.86, "lng": 35.52}, "timestamp": "2026-07-09T09:05:00Z"},
         "readings": [],
         "risk": {"score": 0, "level": "low", "reasons": ["Shipment is currently within safe rule limits"]},
@@ -83,13 +98,18 @@ SHIPMENTS = {
         "destination": "Hospital A",
         "currentLocation": "Hospital A loading bay",
         "routeProgress": 100,
-        "status": "arrived",
+        "status": "delivered",
         "temperature": 4.1,
         "batteryLevel": 63,
         "coolingUnitStatus": "normal",
         "lastUpdated": "2026-07-09T09:20:00Z",
         "destinationGps": None,
         "organizationId": "hospital-a",
+        "driverId": "driver-aya",
+        "vehicleId": "van-12",
+        "containerId": "container-12",
+        "sensorId": "sensor-cold-12",
+        "productCategory": "Blood products",
         "latestReading": {"temperature": 4.1, "batteryLevel": 63, "gps": {"lat": 33.8938, "lng": 35.5018}, "timestamp": "2026-07-09T09:20:00Z"},
         "readings": [],
         "risk": {"score": 0, "level": "low", "reasons": ["Shipment arrived within safe range"]},
@@ -103,7 +123,77 @@ SHIPMENTS = {
             {"timestamp": "2026-07-09T09:20:00Z", "label": "Arrived at Hospital A"},
         ],
     },
+    "ship-a-190": {
+        "shipmentId": "ship-a-190",
+        "id": "ship-a-190",
+        "origin": "Bekaa Fresh Distribution",
+        "destinationHospitalId": "hospital-a",
+        "destinationHospitalName": "Hospital A",
+        "destination": "Hospital A",
+        "organizationId": "hospital-a",
+        "productCategory": "Fresh food",
+        "medicineType": "Fresh dairy",
+        "safeTemperatureMin": 1,
+        "safeTemperatureMax": 4,
+        "currentLocation": "Beirut east corridor - service area",
+        "routeProgress": 44,
+        "status": "at_risk",
+        "temperature": 11.6,
+        "batteryLevel": 12,
+        "coolingUnitStatus": "critical",
+        "lastUpdated": "2026-07-15T09:35:00Z",
+        "riskLevel": "critical",
+        "driverId": "driver-aya",
+        "vehicleId": "van-12",
+        "containerId": "container-12",
+        "sensorId": "sensor-cold-12",
+        "latestReading": {"temperature": 11.6, "batteryLevel": 12, "gps": {"lat": 33.875, "lng": 35.535}, "timestamp": "2026-07-15T09:35:00Z"},
+        "readings": [],
+        "risk": {"score": 90, "level": "critical", "reasons": ["Temperature is above the product storage range", "Cooling battery is critically low"]},
+        "mlPrediction": {"riskLevel": "critical", "confidence": 0.91},
+        "nearestHospital": None,
+        "alerts": [{"severity": "critical", "type": "temperature-excursion", "message": "Fresh dairy has exceeded its safe storage range"}],
+        "supplies": ["Fresh dairy - 48 crates"],
+        "timeline": [
+            {"timestamp": "2026-07-15T08:50:00Z", "label": "Pickup confirmed"},
+            {"timestamp": "2026-07-15T09:35:00Z", "label": "Critical temperature excursion detected"},
+        ],
+    },
+    "ship-a-175": {
+        "shipmentId": "ship-a-175", "id": "ship-a-175", "organizationId": "hospital-a",
+        "origin": "Central Cold Storage", "destination": "Hospital A", "destinationHospitalId": "hospital-a",
+        "destinationHospitalName": "Hospital A", "medicineType": "Laboratory samples", "productName": "Diagnostic samples",
+        "productCategory": "Laboratory samples", "quantity": 18, "unit": "cases", "estimatedValue": 9200,
+        "safeTemperatureMin": 2, "safeTemperatureMax": 8, "status": "awaiting_verification", "riskLevel": "low",
+        "temperature": 4.5, "batteryLevel": 71, "coolingUnitStatus": "normal", "routeProgress": 100,
+        "currentLocation": "Hospital A receiving bay", "driverId": "driver-aya", "vehicleId": "van-12",
+        "containerId": "container-12", "sensorId": "sensor-cold-12", "expectedArrival": "2026-07-15T10:15:00Z",
+        "arrivalTime": "2026-07-15T10:09:00Z", "receiverName": "Maya Nasser", "deliveryNotes": "Seal intact on arrival.",
+        "latestReading": {"temperature": 4.5, "batteryLevel": 71, "gps": {"lat": 33.8938, "lng": 35.5018}, "timestamp": "2026-07-15T10:09:00Z"},
+        "readings": [{"temperature": 4.2, "batteryLevel": 78, "timestamp": "2026-07-15T09:30:00Z"}, {"temperature": 4.5, "batteryLevel": 71, "timestamp": "2026-07-15T10:09:00Z"}],
+        "risk": {"score": 0, "level": "low", "reasons": ["Temperature remained within the required range"]},
+        "alerts": [], "driverActions": ["Confirmed receiver identity", "Recorded delivery note"],
+        "timeline": [{"timestamp": "2026-07-15T09:20:00Z", "label": "Shipment departed"}, {"timestamp": "2026-07-15T10:09:00Z", "label": "Delivery submitted for organization verification"}],
+    },
+    "ship-a-205": {
+        "shipmentId": "ship-a-205", "id": "ship-a-205", "organizationId": "hospital-a",
+        "origin": "Central Cold Storage", "destination": "Hospital A Receiving", "destinationHospitalName": "Hospital A Receiving",
+        "destinationHospitalId": "hospital-a", "medicineType": "Temperature-sensitive vaccines", "productName": "Routine vaccines",
+        "productCategory": "Vaccines", "safeTemperatureMin": 2, "safeTemperatureMax": 8, "status": "planned", "riskLevel": "low",
+        "currentLocation": "Central Cold Storage", "routeProgress": 0, "driverId": "driver-aya", "vehicleId": "van-12",
+        "containerId": "container-12", "sensorId": "sensor-cold-12", "expectedArrival": "2026-07-16T09:30:00Z",
+        "departureAt": "2026-07-16T08:15:00Z", "deliveryInstructions": "Keep the container closed and hand it directly to receiving staff.",
+        "handlingNotes": "Protect from direct light. Do not freeze.", "latestReading": {"temperature": 4.2, "batteryLevel": 88, "timestamp": "2026-07-15T10:20:00Z"},
+        "temperature": 4.2, "batteryLevel": 88, "coolingUnitStatus": "normal", "alerts": [], "readings": [],
+        "risk": {"score": 0, "level": "low", "reasons": ["Shipment is ready for pickup"]},
+        "timeline": [{"timestamp": "2026-07-15T10:20:00Z", "label": "Assigned to Aya Mansour"}],
+    },
 }
+
+# Start the focused local demo without operational records. The Organization
+# creates the first delivery request through the normal workflow.
+SHIPMENTS = {}
+
 ORGANIZATIONS = {
     "hospital-a": {
         "organizationId": "hospital-a",
@@ -122,6 +212,15 @@ ORGANIZATIONS = {
         "status": "online",
         "contact": "ops-b@example.org",
         "region": "Mount Lebanon",
+    },
+    "warehouse-north": {
+        "organizationId": "warehouse-north",
+        "name": "NorthLine Refrigerated Warehouse",
+        "type": "refrigerated_warehouse",
+        "gps": {"lat": 34.122, "lng": 35.651},
+        "status": "online",
+        "contact": "operations@northline.example",
+        "region": "North Lebanon",
     },
 }
 VANS = {
@@ -304,6 +403,38 @@ USERS = {
         "organizationId": None,
         "permissions": ["monitor", "coordinate_requests"],
     },
+    "organization-token": {
+        "userId": "organization-operations-user",
+        "username": "organization",
+        "email": "organization@vitae.local",
+        "password": "organization123",
+        "name": "Organization Operations",
+        "role": "organization_user",
+        "organizationId": "hospital-a",
+        "permissions": ["manage_shipments", "monitor_shipments", "manage_drivers", "request_support"],
+    },
+    "driver-token": {
+        "userId": "driver-aya-user",
+        "username": "driver",
+        "email": "driver@vitae.local",
+        "password": "driver123",
+        "name": "Aya Mansour",
+        "role": "driver",
+        "organizationId": "hospital-a",
+        "driverId": "driver-aya",
+        "permissions": ["view_assigned_deliveries", "report_incident", "complete_delivery", "request_support"],
+    },
+    "driver-rami-token": {
+        "userId": "driver-rami-user",
+        "username": "driver.rami",
+        "email": "rami.driver@vitae.local",
+        "password": "driver123",
+        "name": "Rami Haddad",
+        "role": "driver",
+        "organizationId": "hospital-a",
+        "driverId": "driver-rami",
+        "permissions": ["view_assigned_deliveries", "report_incident", "complete_delivery", "request_support"],
+    },
     "hospital-a-token": {
         "userId": "hospital-a-manager",
         "username": "hospitalA",
@@ -373,6 +504,189 @@ STAFF = {
     ],
 }
 
+DRIVERS = {
+    "driver-aya": {
+        "driverId": "driver-aya",
+        "organizationId": "hospital-a",
+        "name": "Aya Mansour",
+        "phone": "+961 70 555 014",
+        "status": "assigned",
+        "vehicleId": "van-12",
+    },
+    "driver-samir": {
+        "driverId": "driver-samir",
+        "organizationId": "hospital-b",
+        "name": "Samir Khalil",
+        "phone": "+961 71 555 022",
+        "status": "available",
+        "vehicleId": "van-22",
+    },
+    "driver-rami": {
+        "driverId": "driver-rami", "organizationId": "hospital-a", "name": "Rami Haddad",
+        "username": "rami.haddad", "phone": "+961 76 555 031", "status": "available", "vehicleId": "van-18",
+    },
+}
+
+DRIVERS = {"driver-aya": DRIVERS["driver-aya"]}
+DRIVERS["driver-aya"]["status"] = "available"
+
+FACILITIES = {
+    "facility-a-central": {"facilityId": "facility-a-central", "organizationId": "hospital-a", "name": "Central Cold Storage", "type": "warehouse", "gps": {"lat": 33.8797, "lng": 35.5018}},
+    "facility-a-receiving": {"facilityId": "facility-a-receiving", "organizationId": "hospital-a", "name": "Hospital A Receiving", "type": "receiving", "gps": {"lat": 33.8938, "lng": 35.5018}},
+    "facility-b-hub": {"facilityId": "facility-b-hub", "organizationId": "hospital-b", "name": "Regional Supply Hub", "type": "warehouse", "gps": {"lat": 33.8332, "lng": 35.5466}},
+    "facility-b-receiving": {"facilityId": "facility-b-receiving", "organizationId": "hospital-b", "name": "Hospital B Receiving", "type": "receiving", "gps": {"lat": 33.8710, "lng": 35.5300}},
+    "facility-north": {"facilityId": "facility-north", "organizationId": "warehouse-north", "name": "NorthLine Main Facility", "type": "warehouse", "gps": {"lat": 34.122, "lng": 35.651}},
+}
+
+VEHICLES = {
+    "van-12": {"vehicleId": "van-12", "organizationId": "hospital-a", "name": "Refrigerated Van 12", "type": "vehicle", "status": "available"},
+    "van-18": {"vehicleId": "van-18", "organizationId": "hospital-a", "name": "Refrigerated Van 18", "type": "vehicle", "status": "available"},
+    "van-22": {"vehicleId": "van-22", "organizationId": "hospital-b", "name": "Refrigerated Van 22", "type": "vehicle", "status": "available"},
+}
+
+VEHICLES = {"van-12": VEHICLES["van-12"]}
+
+SENSORS = {
+    "sensor-cold-12": {
+        "sensorId": "sensor-cold-12",
+        "organizationId": "hospital-a",
+        "containerId": "container-12",
+        "status": "healthy",
+        "connectionStatus": "online",
+        "batteryLevel": 95,
+        "lastSeen": "2026-07-15T10:30:00Z",
+        "shipmentId": "ship-a-100",
+    },
+    "sensor-cold-22": {
+        "sensorId": "sensor-cold-22",
+        "organizationId": "hospital-b",
+        "containerId": "container-22",
+        "status": "healthy",
+        "batteryLevel": 81,
+        "lastSeen": "2026-07-15T09:33:00Z",
+    },
+    "sensor-freezer-07": {
+        "sensorId": "sensor-freezer-07",
+        "organizationId": "warehouse-north",
+        "containerId": "container-07",
+        "status": "offline",
+        "batteryLevel": 64,
+        "lastSeen": "2026-07-15T07:10:00Z",
+    },
+}
+
+SENSORS = {"sensor-cold-12": SENSORS["sensor-cold-12"]}
+SENSORS["sensor-cold-12"].pop("shipmentId", None)
+
+SUPPORT_TICKETS = {
+    "ticket-admin-200": {
+        "ticketId": "ticket-admin-200",
+        "organizationId": None,
+        "shipmentId": None,
+        "sourceType": "admin",
+        "subject": "Coordinate platform sensor investigation",
+        "category": "admin_request",
+        "priority": "high",
+        "status": "new",
+        "assignedTo": "central-support",
+        "requester": "VITAE Platform Admin",
+        "createdAt": "2026-07-15T09:42:00Z",
+        "updatedAt": "2026-07-15T09:42:00Z",
+        "summary": "Admin requested Support to coordinate diagnostics for an intermittent warehouse sensor outage.",
+    },
+    "ticket-1042": {
+        "ticketId": "ticket-1042",
+        "organizationId": "hospital-a",
+        "shipmentId": "ship-a-190",
+        "subject": "Critical temperature excursion",
+        "category": "shipment_risk",
+        "priority": "critical",
+        "status": "new",
+        "assignedTo": "central-support",
+        "requester": "Organization Operations",
+        "createdAt": "2026-07-15T09:35:00Z",
+        "updatedAt": "2026-07-15T09:38:00Z",
+        "summary": "Temperature remains above range and the cooling battery is low.",
+    },
+    "ticket-1038": {
+        "ticketId": "ticket-1038",
+        "organizationId": "hospital-b",
+        "shipmentId": "ship-b-220",
+        "subject": "Confirm revised delivery window",
+        "category": "delivery",
+        "priority": "medium",
+        "status": "in_progress",
+        "assignedTo": "central-support",
+        "requester": "Hospital B Manager",
+        "createdAt": "2026-07-15T08:25:00Z",
+        "updatedAt": "2026-07-15T09:05:00Z",
+        "summary": "Receiver requested confirmation of the updated arrival time.",
+    },
+    "ticket-1021": {
+        "ticketId": "ticket-1021",
+        "organizationId": "warehouse-north",
+        "shipmentId": None,
+        "subject": "Sensor stopped reporting",
+        "category": "device",
+        "priority": "high",
+        "status": "waiting_for_response",
+        "assignedTo": "central-support",
+        "requester": "NorthLine Operations",
+        "createdAt": "2026-07-15T07:55:00Z",
+        "updatedAt": "2026-07-15T08:22:00Z",
+        "summary": "Warehouse team is checking power to sensor-freezer-07.",
+    },
+    "ticket-0994": {
+        "ticketId": "ticket-0994",
+        "organizationId": "hospital-a",
+        "shipmentId": "ship-a-145",
+        "subject": "Delivery confirmation received",
+        "category": "delivery",
+        "priority": "low",
+        "status": "resolved",
+        "assignedTo": "central-support",
+        "requester": "Hospital A Manager",
+        "createdAt": "2026-07-14T12:30:00Z",
+        "resolvedAt": "2026-07-14T16:45:00Z",
+        "resolutionSummary": "Delivery evidence was confirmed with the receiving team.",
+        "updatedAt": "2026-07-14T16:45:00Z",
+        "summary": "Proof of delivery was verified and the ticket was closed.",
+    },
+    "ticket-driver-010": {
+        "ticketId": "ticket-driver-010", "organizationId": "hospital-a", "shipmentId": "ship-a-100", "driverId": "driver-aya",
+        "subject": "Cooling unit guidance", "category": "cooling_problem", "priority": "medium", "status": "in_progress",
+        "assignedTo": "central-support", "requester": "Aya Mansour", "updatedAt": "2026-07-15T09:05:00Z",
+        "createdAt": "2026-07-15T08:58:00Z",
+        "summary": "Driver requested guidance after a temperature warning.",
+        "messages": [
+            {"author": "Aya Mansour", "timestamp": "2026-07-15T08:58:00Z", "body": "The temperature warning remains visible after checking the container.", "internal": False},
+            {"author": "Monitoring Center Support", "timestamp": "2026-07-15T09:05:00Z", "body": "Keep the container closed and confirm that cooling power is active. Contact operations if the warning continues.", "internal": False},
+        ],
+    },
+}
+
+# Tickets and alerts are intentionally empty at startup. They are created by
+# real Organization/Driver actions or by telemetry risk during the demo.
+SUPPORT_TICKETS = {}
+
+ORGANIZATION_ALERTS = {
+    "alert-a-190": {"alertId": "alert-a-190", "organizationId": "hospital-a", "shipmentId": "ship-a-190", "severity": "critical", "type": "temperature excursion", "detectedAt": "2026-07-15T09:35:00Z", "explanation": "Fresh dairy exceeded its safe storage range while cooling power was low.", "recommendedAction": "Contact the driver and restore cooling immediately.", "status": "new", "driverResponse": "No response recorded", "updatedAt": "2026-07-15T09:35:00Z"},
+    "alert-a-100": {"alertId": "alert-a-100", "organizationId": "hospital-a", "shipmentId": "ship-a-100", "severity": "high", "type": "temperature warning", "detectedAt": "2026-07-09T08:45:00Z", "explanation": "Temperature is above the required range.", "recommendedAction": "Confirm cooling operation with the assigned driver.", "status": "acknowledged", "driverResponse": "Driver is checking the cooling unit.", "updatedAt": "2026-07-09T08:50:00Z"},
+}
+
+ORGANIZATION_ALERTS = {}
+
+DRIVER_INCIDENTS = {}
+
+PLATFORM_SETTINGS = {
+    "displayName": "VITAE",
+    "temperatureWarningMargin": 1.0,
+    "lowBatteryThreshold": 30,
+    "criticalBatteryThreshold": 15,
+    "notifyCriticalAlerts": True,
+    "notifyOfflineSensors": True,
+}
+
 
 def get_all_shipments():
     return deepcopy(list(SHIPMENTS.values()))
@@ -400,14 +714,14 @@ def get_dashboard_data():
 
 def get_user_by_token(token):
     user = USERS.get(token)
-    return deepcopy(user) if user else None
+    return deepcopy(user) if user and user.get("accountStatus", "active") == "active" else None
 
 
 def authenticate_user(username, password):
     normalized_username = str(username or "").strip().lower()
     for token, user in USERS.items():
         allowed_names = [user.get("username"), user.get("email")]
-        if normalized_username in [str(name or "").lower() for name in allowed_names] and user.get("password") == password:
+        if normalized_username in [str(name or "").lower() for name in allowed_names] and user.get("password") == password and user.get("accountStatus", "active") == "active":
             return token, deepcopy(user)
     return None, None
 
@@ -416,15 +730,176 @@ def is_admin_user(user):
     return bool(user and user.get("role") == "admin")
 
 
+def normalized_role(user_or_role):
+    role = user_or_role.get("role") if isinstance(user_or_role, dict) else user_or_role
+    return "organization_user" if role == "hospital" else role
+
+
+def is_organization_user(user):
+    organization = ORGANIZATIONS.get(user.get("organizationId")) if user else None
+    return bool(user and normalized_role(user) == "organization_user" and organization and organization.get("accountStatus", "active") == "active")
+
+
+def is_driver_user(user):
+    if not user or normalized_role(user) != "driver" or not user.get("driverId"):
+        return False
+    driver = DRIVERS.get(user.get("driverId"))
+    organization = ORGANIZATIONS.get(user.get("organizationId"))
+    return bool(driver and organization and driver.get("organizationId") == user.get("organizationId") and organization.get("accountStatus", "active") == "active")
+
+
 def is_central_user(user):
     return bool(user and user.get("role") in ["admin", "support"])
 
 
 def get_user_profile(user):
     profile = sanitize_user(user)
+    profile["normalizedRole"] = normalized_role(user)
     organization_id = user.get("organizationId")
     profile["organization"] = public_organization(ORGANIZATIONS.get(organization_id)) if organization_id else None
     return profile
+
+
+def get_admin_foundation_dashboard_data():
+    shipments = [admin_shipment_record(shipment) for shipment in SHIPMENTS.values()]
+    sensors = [admin_sensor_record(sensor) for sensor in SENSORS.values()]
+    tickets = [admin_ticket_record(ticket) for ticket in SUPPORT_TICKETS.values()]
+    organizations = [admin_organization_record(organization) for organization in ORGANIZATIONS.values()]
+    users = [admin_user_record(token, user) for token, user in USERS.items()]
+    alerts = admin_alert_records()
+    reports = admin_report_data(shipments, sensors, tickets, organizations)
+    return {
+        "scope": "admin",
+        "summary": {
+            "organizations": len(organizations),
+            "activeShipments": len([item for item in shipments if item.get("status") in ["active", "in_transit", "at_risk", "delayed", "arrived"]]),
+            "safeShipments": len([item for item in shipments if item.get("riskLevel") == "low"]),
+            "atRiskShipments": len([item for item in shipments if item.get("riskLevel") == "high"]),
+            "criticalShipments": len([item for item in shipments if item.get("riskLevel") == "critical"]),
+            "onlineSensors": len([item for item in sensors if item.get("connectionStatus") == "online"]),
+            "offlineSensors": len([item for item in sensors if item.get("connectionStatus") == "offline"]),
+            "openTickets": len([item for item in tickets if item.get("status") != "resolved"]),
+            "protectedShipments": reports["protectedShipments"],
+            "estimatedValueProtected": reports["estimatedValueProtected"],
+        },
+        "shipmentStatus": status_counts(shipments, "status"),
+        "criticalIncidents": [item for item in shipments if item.get("riskLevel") in ["critical", "high"]],
+        "deviceHealth": {
+            "healthy": len([item for item in sensors if item.get("deviceStatus") == "healthy"]),
+            "lowBattery": len([item for item in sensors if item.get("batteryCondition") == "low"]),
+            "offline": len([item for item in sensors if item.get("connectionStatus") == "offline"]),
+            "sensors": sensors,
+        },
+        "recentOrganizations": sorted(organizations, key=lambda item: item.get("createdAt") or "", reverse=True)[:4],
+        "latestTickets": sorted(tickets, key=lambda item: item.get("updatedAt") or "", reverse=True)[:5],
+        "organizations": organizations,
+        "users": users,
+        "shipments": shipments,
+        "devices": sensors,
+        "alerts": alerts,
+        "tickets": tickets,
+        "reports": reports,
+        "settings": deepcopy(PLATFORM_SETTINGS),
+    }
+
+
+def get_organization_foundation_dashboard_data(organization_id):
+    shipments = get_organization_shipments(organization_id)
+    active = [item for item in shipments if item.get("status") in {"active", "in_transit", "at_risk", "delayed", "arrived"}]
+    alerts = get_organization_alerts(organization_id)
+    drivers = get_organization_drivers(organization_id)
+    reports = get_organization_reports(organization_id)
+    return {
+        "scope": "organization",
+        "organization": hospital_own_organization(organization_id),
+        "summary": {
+            "activeShipments": len(active),
+            "incomingShipments": len([item for item in active if item.get("status") in ["in_transit", "active", "at_risk"]]),
+            "completedShipments": reports["completedShipments"],
+            "atRiskShipments": len([item for item in active if item.get("riskLevel") in ["critical", "high"]]),
+            "criticalAlerts": len([item for item in alerts if item.get("severity") == "critical" and item.get("status") != "resolved"]),
+            "availableDrivers": len([item for item in drivers if item.get("status") == "available"]),
+            "recentDeliveries": len([item for item in shipments if item.get("status") in ["delivered", "awaiting_verification"]]),
+            "estimatedValueProtected": reports["estimatedValueProtected"],
+        },
+        "shipments": shipments,
+        "activeShipments": active,
+        "recentActivity": [event for item in shipments for event in item.get("timeline", [])][-6:],
+        "drivers": drivers,
+        "facilities": deepcopy([item for item in FACILITIES.values() if item.get("organizationId") == organization_id]),
+        "vehicles": deepcopy([item for item in VEHICLES.values() if item.get("organizationId") == organization_id]),
+        "sensors": get_organization_sensors(organization_id),
+        "alerts": alerts,
+        "tickets": get_organization_tickets(organization_id),
+        "reports": reports,
+    }
+
+
+def get_driver_dashboard_data(driver_id):
+    driver = DRIVERS.get(driver_id)
+    if not driver:
+        return {"scope": "driver", "driver": None, "activeDelivery": None, "nextDelivery": None, "assignedDeliveries": [], "deliveryRequests": [], "acceptedDeliveries": [], "upcomingDeliveries": [], "activeDeliveries": [], "completedDeliveries": [], "alerts": [], "tickets": [], "incidents": []}
+    shipments = [driver_shipment_record(item) for item in SHIPMENTS.values() if item.get("driverId") == driver_id]
+    requests = [item for item in shipments if item.get("status") in DRIVER_REQUEST_STATUSES]
+    accepted = [item for item in shipments if item.get("status") in DRIVER_ACCEPTED_STATUSES]
+    active = [item for item in shipments if item.get("status") in DRIVER_ACTIVE_STATUSES]
+    completed = [item for item in shipments if item.get("status") in DRIVER_COMPLETED_STATUSES]
+    active.sort(key=lambda item: ({"critical": 0, "high": 1, "medium": 2, "low": 3}.get(item.get("riskLevel"), 4), item.get("expectedArrival") or ""))
+    requests.sort(key=lambda item: item.get("departureAt") or item.get("expectedArrival") or "")
+    accepted.sort(key=lambda item: item.get("departureAt") or item.get("expectedArrival") or "")
+    return {
+        "scope": "driver",
+        "driver": {**deepcopy(driver), "organizationName": organization_name(driver.get("organizationId")), "organizationContact": (ORGANIZATIONS.get(driver.get("organizationId")) or {}).get("contact")},
+        "activeDelivery": active[0] if active else None,
+        "nextDelivery": accepted[0] if accepted else requests[0] if requests else None,
+        "assignedDeliveries": requests + accepted + active,
+        "deliveryRequests": requests,
+        "acceptedDeliveries": accepted,
+        "upcomingDeliveries": requests + accepted,
+        "activeDeliveries": active,
+        "completedDeliveries": completed,
+        "alerts": get_driver_alerts(driver_id),
+        "tickets": get_driver_support_tickets(driver_id),
+        "incidents": deepcopy([item for item in DRIVER_INCIDENTS.values() if item.get("driverId") == driver_id]),
+    }
+
+
+def get_support_foundation_dashboard_data(user_id):
+    tickets = [support_ticket_record(item) for item in SUPPORT_TICKETS.values()]
+    assigned = [item for item in tickets if item.get("assignedTo") == user_id and item.get("status") != "resolved"]
+    resolved = [item for item in tickets if item.get("status") == "resolved"]
+    resolution_hours = []
+    for item in resolved:
+        if item.get("createdAt") and item.get("resolvedAt"):
+            resolution_hours.append((_parse_datetime(item["resolvedAt"], "Resolved") - _parse_datetime(item["createdAt"], "Created")).total_seconds() / 3600)
+    priority_queue = sorted(
+        [item for item in tickets if item.get("status") != "resolved"],
+        key=lambda item: ({"critical": 0, "high": 1, "medium": 2, "low": 3}.get(item.get("priority"), 4), item.get("updatedAt") or ""),
+    )
+    shipments = get_support_shipment_records()
+    active_trips = [item for item in shipments if item.get("status") in {"active", "in_transit", "at_risk", "delayed"}]
+    active_trips.sort(key=lambda item: (0 if item.get("status") in {"at_risk", "delayed"} else 1, item.get("lastUpdated") or ""))
+    return {
+        "scope": "support",
+        "summary": {
+            "new": count_ticket_status(tickets, "new"),
+            "critical": len([item for item in tickets if item.get("priority") == "critical" and item.get("status") != "resolved"]),
+            "inProgress": count_ticket_status(tickets, "in_progress"),
+            "waiting": count_ticket_status(tickets, "waiting_for_user"),
+            "resolved": len(resolved),
+            "averageResolutionHours": round(sum(resolution_hours) / len(resolution_hours), 1) if resolution_hours else None,
+        },
+        "priorityQueue": priority_queue,
+        "incomingRequests": priority_queue,
+        "activeTrips": active_trips,
+        "recentlyUpdated": sorted(tickets, key=lambda item: item.get("updatedAt") or "", reverse=True),
+        "assignedTickets": assigned,
+        "tickets": tickets,
+        "shipments": shipments,
+        "organizations": get_support_organization_records(),
+        "agents": [{"userId": user.get("userId"), "name": user.get("name")} for user in USERS.values() if normalized_role(user) == "support"],
+        "knowledgeBase": support_knowledge_base(),
+    }
 
 
 def get_admin_dashboard_data():
@@ -651,12 +1126,21 @@ def create_or_update_shipment(payload):
     shipment = SHIPMENTS.get(shipment_id, create_empty_shipment(shipment_id))
 
     for field in [
+        "origin",
+        "status",
         "medicineType",
+        "productCategory",
         "safeTemperatureMin",
         "safeTemperatureMax",
         "destination",
+        "destinationHospitalId",
+        "destinationHospitalName",
         "destinationGps",
         "organizationId",
+        "driverId",
+        "vehicleId",
+        "containerId",
+        "sensorId",
     ]:
         if field in payload:
             shipment[field] = payload[field]
@@ -738,11 +1222,16 @@ def create_empty_shipment(shipment_id):
     return {
         "shipmentId": shipment_id,
         "medicineType": None,
+        "productCategory": None,
         "safeTemperatureMin": None,
         "safeTemperatureMax": None,
         "destination": None,
         "destinationGps": None,
         "organizationId": None,
+        "driverId": None,
+        "vehicleId": None,
+        "containerId": None,
+        "sensorId": None,
         "latestReading": None,
         "readings": [],
         "risk": None,
@@ -755,15 +1244,67 @@ def create_empty_shipment(shipment_id):
 def save_sensor_reading(shipment_id, reading):
     shipment = SHIPMENTS[shipment_id]
     shipment["latestReading"] = reading
-    shipment["readings"].append(reading)
+    shipment.setdefault("readings", []).append(reading)
+    shipment["lastUpdated"] = reading.get("timestamp") or now_iso()
+    if reading.get("gps"):
+        shipment["currentLocation"] = reading.get("locationLabel") or location_label(reading.get("gps"))
+    if reading.get("routeProgress") is not None:
+        shipment["routeProgress"] = reading.get("routeProgress")
+    sensor = SENSORS.get(shipment.get("sensorId"))
+    if sensor:
+        sensor["batteryLevel"] = reading.get("batteryLevel")
+        sensor["lastReadingTime"] = shipment["lastUpdated"]
+        sensor["lastSeen"] = shipment["lastUpdated"]
+        sensor["status"] = "healthy"
+        sensor["connectionStatus"] = "online"
 
 
 def update_shipment_result(shipment_id, risk, ml_prediction, nearest_hospital, alerts):
     shipment = SHIPMENTS[shipment_id]
+    previous_classification = shipment.get("riskClassification")
+    previous_alerts = {item.get("type"): item for item in shipment.get("alerts", [])}
+    classification = {"low": "safe", "medium": "monitor", "high": "at_risk", "critical": "critical"}.get(risk.get("level"), "monitor")
     shipment["risk"] = risk
+    shipment["riskLevel"] = risk.get("level")
+    shipment["riskClassification"] = classification
     shipment["mlPrediction"] = ml_prediction
     shipment["nearestHospital"] = nearest_hospital
-    shipment["alerts"] = alerts
+    normalized_alerts = []
+    new_alert_ids = set()
+    for alert in alerts:
+        existing = next((item for item in ORGANIZATION_ALERTS.values() if item.get("shipmentId") == shipment_id and item.get("type") == alert.get("type") and item.get("status") != "resolved"), None)
+        alert_id = alert.get("alertId") or (existing or previous_alerts.get(alert.get("type")) or {}).get("alertId") or f"alert-{shipment_id}-{uuid4().hex[:8]}"
+        timestamp = alert.get("timestamp") or shipment.get("lastUpdated") or now_iso()
+        normalized = {**deepcopy(alert), "alertId": alert_id, "status": alert.get("status") or "new"}
+        normalized_alerts.append(normalized)
+        if not existing and alert.get("type") not in previous_alerts:
+            new_alert_ids.add(alert_id)
+        organization_id = shipment.get("organizationId")
+        if organization_id:
+            stored = {
+                "alertId": alert_id, "organizationId": organization_id, "shipmentId": shipment_id,
+                "severity": alert.get("severity") or risk.get("level") or "medium",
+                "type": alert.get("type") or "cold_chain_risk", "detectedAt": timestamp,
+                "explanation": alert.get("message") or "; ".join(risk.get("reasons") or []) or "Cold-chain condition requires review.",
+                "recommendedAction": alert.get("recommendedAction") or "Check the shipment condition immediately.",
+                "status": "new", "driverResponse": "No response recorded", "updatedAt": timestamp,
+            }
+            if existing:
+                stored["status"] = existing.get("status", "new")
+                stored["driverResponse"] = existing.get("driverResponse", "No response recorded")
+                stored["detectedAt"] = existing.get("detectedAt", timestamp)
+            ORGANIZATION_ALERTS[alert_id] = stored
+    shipment["alerts"] = normalized_alerts
+    if classification in {"at_risk", "critical"} and shipment.get("status") in {"active", "in_transit"}:
+        shipment["status"] = "at_risk"
+    elif classification in {"safe", "monitor"} and shipment.get("status") == "at_risk":
+        shipment["status"] = "in_transit"
+    timestamp = shipment.get("lastUpdated") or now_iso()
+    if previous_classification != classification:
+        shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Risk classified: {classification.replace('_', ' ').title()}"})
+    for alert in normalized_alerts:
+        if alert.get("alertId") in new_alert_ids:
+            shipment.setdefault("timeline", []).append({"timestamp": alert.get("timestamp") or timestamp, "label": f"Alert created: {str(alert.get('type') or 'cold chain risk').replace('_', ' ').title()}"})
 
 
 def get_payload_organization(payload, user):
@@ -1098,6 +1639,14 @@ def shipment_monitor_record(shipment):
         "originGps": origin_gps,
         "destinationHospitalId": destination_id,
         "destinationHospitalName": shipment.get("destinationHospitalName") or shipment.get("destination"),
+        "organizationId": shipment.get("organizationId"),
+        "driverId": shipment.get("driverId"),
+        "driverName": (DRIVERS.get(shipment.get("driverId")) or {}).get("name"),
+        "vehicleId": shipment.get("vehicleId"),
+        "containerId": shipment.get("containerId"),
+        "sensorId": shipment.get("sensorId"),
+        "sensorStatus": (SENSORS.get(shipment.get("sensorId")) or {}).get("status"),
+        "productCategory": shipment.get("productCategory") or shipment.get("medicineType"),
         "destinationGps": destination_gps,
         "currentLocation": shipment.get("currentLocation") or location_label(latest.get("gps")),
         "currentGps": current_gps,
@@ -1113,7 +1662,9 @@ def shipment_monitor_record(shipment):
         "batteryStatus": battery_status(battery_level),
         "coolingUnitStatus": shipment.get("coolingUnitStatus") or ("warning" if battery_status(battery_level) != "normal" else "normal"),
         "lastUpdated": shipment.get("lastUpdated") or latest.get("timestamp"),
+        "expectedArrival": shipment.get("expectedArrival"),
         "riskLevel": shipment.get("riskLevel") or get_risk_level(shipment),
+        "riskClassification": shipment.get("riskClassification") or {"low": "safe", "medium": "monitor", "high": "at_risk", "critical": "critical"}.get(shipment.get("riskLevel") or get_risk_level(shipment), "monitor"),
         "alerts": deepcopy(shipment.get("alerts", [])),
         "supplies": deepcopy(shipment.get("supplies") or [shipment.get("medicineType")] if shipment.get("medicineType") else []),
         "timeline": deepcopy(shipment.get("timeline", [])),
@@ -1330,6 +1881,408 @@ def get_shipment_alerts():
     return alerts
 
 
+ORGANIZATION_TYPES = {"hospital", "pharmacy", "laboratory", "supermarket", "food_distributor", "refrigerated_warehouse"}
+ADMIN_ROLES = {"admin", "organization_user", "driver", "support"}
+ALERT_STATUSES = {"new", "acknowledged", "action_taken", "escalated", "resolved"}
+TICKET_PRIORITIES = {"low", "medium", "high", "critical"}
+
+
+def now_iso():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def admin_organization_record(organization):
+    organization_id = organization.get("organizationId")
+    return {
+        **deepcopy(organization),
+        "contactPerson": organization.get("contactPerson") or "Operations Manager",
+        "email": organization.get("email") or organization.get("contact"),
+        "phone": organization.get("phone") or "+961 1 000 000",
+        "address": organization.get("address") or organization.get("region"),
+        "accountStatus": organization.get("accountStatus") or ("active" if organization.get("status") == "online" else "suspended"),
+        "activeShipments": len([
+            item for item in SHIPMENTS.values()
+            if (item.get("organizationId") == organization_id or item.get("destinationHospitalId") == organization_id)
+            and item.get("status") not in ["arrived", "delivered"]
+        ]),
+        "createdAt": organization.get("createdAt") or "2026-06-25T09:00:00Z",
+    }
+
+
+def admin_user_record(token, user):
+    organization = ORGANIZATIONS.get(user.get("organizationId")) or {}
+    return {
+        "userId": user.get("userId"),
+        "name": user.get("name"),
+        "username": user.get("username"),
+        "email": user.get("email"),
+        "role": normalized_role(user),
+        "legacyRole": user.get("role") if user.get("role") == "hospital" else None,
+        "organizationId": user.get("organizationId"),
+        "organizationName": organization.get("name"),
+        "driverId": user.get("driverId"),
+        "accountStatus": user.get("accountStatus", "active"),
+        "lastActivity": user.get("lastActivity") or "2026-07-15T09:30:00Z",
+    }
+
+
+def admin_shipment_record(shipment):
+    record = shipment_monitor_record(shipment)
+    organization_id = shipment.get("organizationId") or shipment.get("destinationHospitalId")
+    driver = DRIVERS.get(shipment.get("driverId")) or {}
+    record.update({
+        "organizationId": organization_id,
+        "organizationName": organization_name(organization_id),
+        "product": shipment.get("productCategory") or shipment.get("medicineType") or "Cold-chain product",
+        "driverName": driver.get("name") or "Unassigned",
+        "expectedArrival": shipment.get("expectedArrival") or "Not available",
+        "estimatedValue": shipment.get("estimatedValue") or estimated_shipment_value(shipment),
+    })
+    return record
+
+
+def admin_sensor_record(sensor):
+    organization = ORGANIZATIONS.get(sensor.get("organizationId")) or {}
+    battery = sensor.get("batteryLevel")
+    status = sensor.get("status") or "healthy"
+    connection = sensor.get("connectionStatus") or ("offline" if status == "offline" else "online")
+    battery_condition = "critical" if isinstance(battery, (int, float)) and battery <= 15 else "low" if isinstance(battery, (int, float)) and battery <= 30 else "normal"
+    return {
+        **deepcopy(sensor),
+        "deviceType": sensor.get("deviceType") or "Temperature and location sensor",
+        "organizationName": organization.get("name"),
+        "shipmentId": sensor.get("shipmentId") or next((item.get("shipmentId") for item in SHIPMENTS.values() if item.get("sensorId") == sensor.get("sensorId")), None),
+        "assignment": sensor.get("shipmentId") or sensor.get("containerId") or "Unassigned",
+        "connectionStatus": connection,
+        "batteryCondition": battery_condition,
+        "lastReadingTime": sensor.get("lastReadingTime") or sensor.get("lastSeen"),
+        "deviceStatus": "inactive" if sensor.get("active") is False else status,
+        "active": sensor.get("active", True),
+    }
+
+
+def admin_alert_records():
+    records = []
+    for shipment in SHIPMENTS.values():
+        organization_id = shipment.get("organizationId") or shipment.get("destinationHospitalId")
+        for index, alert in enumerate(shipment.get("alerts", [])):
+            alert_id = alert.get("alertId") or f"alert-{shipment.get('shipmentId')}-{index + 1}"
+            alert["alertId"] = alert_id
+            alert.setdefault("status", "new")
+            records.append({
+                "alertId": alert_id,
+                "severity": alert.get("severity") or "medium",
+                "shipmentId": shipment.get("shipmentId"),
+                "organizationId": organization_id,
+                "organizationName": organization_name(organization_id),
+                "type": alert.get("type") or "cold_chain",
+                "detectedAt": alert.get("timestamp") or shipment.get("lastUpdated"),
+                "explanation": alert.get("message") or "Cold-chain condition requires review.",
+                "recommendedAction": alert.get("recommendedAction") or recommended_admin_action(alert, shipment),
+                "status": alert.get("status"),
+                "driverResponse": alert.get("driverResponse") or "No response recorded",
+            })
+    return records
+
+
+def admin_ticket_record(ticket):
+    assigned_user = next((user for user in USERS.values() if user.get("userId") == ticket.get("assignedTo")), None) or {}
+    return {
+        **ticket_record(ticket),
+        "reportingUser": ticket.get("reportingUser") or ticket.get("requester"),
+        "assignedAgent": assigned_user.get("name") or "Unassigned",
+        "createdAt": ticket.get("createdAt") or ticket.get("updatedAt"),
+    }
+
+
+def admin_report_data(shipments, sensors, tickets, organizations):
+    completed = [item for item in shipments if item.get("status") in ["arrived", "delivered"]]
+    safe = [item for item in shipments if item.get("riskLevel") == "low"]
+    protected_ids = {item.get("shipmentId") for item in [*completed, *safe]}
+    return {
+        "totalShipments": len(shipments),
+        "completedShipments": len(completed),
+        "safeShipments": len(safe),
+        "atRiskShipments": len([item for item in shipments if item.get("riskLevel") == "high"]),
+        "criticalShipments": len([item for item in shipments if item.get("riskLevel") == "critical"]),
+        "organizationsByType": status_counts(organizations, "type"),
+        "onlineSensors": len([item for item in sensors if item.get("connectionStatus") == "online"]),
+        "offlineSensors": len([item for item in sensors if item.get("connectionStatus") == "offline"]),
+        "openTickets": len([item for item in tickets if item.get("status") != "resolved"]),
+        "resolvedTickets": len([item for item in tickets if item.get("status") == "resolved"]),
+        "protectedShipments": len(protected_ids),
+        "estimatedValueProtected": sum(item.get("estimatedValue") or 0 for item in shipments if item.get("shipmentId") in protected_ids),
+    }
+
+
+def create_admin_organization(payload):
+    name = str(payload.get("name") or "").strip()
+    org_type = normalize_name(payload.get("type")).replace(" ", "_")
+    email = str(payload.get("email") or "").strip()
+    if not name:
+        raise ValueError("Organization name is required")
+    if org_type not in ORGANIZATION_TYPES:
+        raise ValueError("Select a supported organization type")
+    if not email or "@" not in email:
+        raise ValueError("A valid organization email is required")
+    organization_id = payload.get("organizationId") or f"org-{uuid4().hex[:8]}"
+    if organization_id in ORGANIZATIONS:
+        raise ValueError("Organization ID already exists")
+    ORGANIZATIONS[organization_id] = {
+        "organizationId": organization_id,
+        "name": name,
+        "type": org_type,
+        "contactPerson": str(payload.get("contactPerson") or "").strip(),
+        "email": email,
+        "contact": email,
+        "phone": str(payload.get("phone") or "").strip(),
+        "address": str(payload.get("address") or "").strip(),
+        "region": str(payload.get("address") or "").strip(),
+        "accountStatus": "active",
+        "status": "online",
+        "createdAt": now_iso(),
+        "gps": payload.get("gps"),
+    }
+    return admin_organization_record(ORGANIZATIONS[organization_id])
+
+
+def update_admin_organization(organization_id, payload):
+    organization = ORGANIZATIONS.get(organization_id)
+    if not organization:
+        raise KeyError("Organization not found")
+    if "type" in payload:
+        org_type = normalize_name(payload.get("type")).replace(" ", "_")
+        if org_type not in ORGANIZATION_TYPES:
+            raise ValueError("Select a supported organization type")
+        organization["type"] = org_type
+    for field in ["name", "contactPerson", "email", "phone", "address"]:
+        if field in payload:
+            value = str(payload.get(field) or "").strip()
+            if field in ["name", "email"] and not value:
+                raise ValueError(f"{field.title()} is required")
+            organization[field] = value
+    if "email" in payload:
+        if "@" not in organization["email"]:
+            raise ValueError("A valid organization email is required")
+        organization["contact"] = organization["email"]
+    if "address" in payload:
+        organization["region"] = organization["address"]
+    if "accountStatus" in payload:
+        status = normalize_name(payload.get("accountStatus"))
+        if status not in ["active", "suspended"]:
+            raise ValueError("Account status must be active or suspended")
+        organization["accountStatus"] = status
+        organization["status"] = "online" if status == "active" else "offline"
+    return admin_organization_record(organization)
+
+
+def create_admin_user(payload):
+    name = str(payload.get("name") or "").strip()
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    role = normalized_role(payload.get("role"))
+    if not name or not username or not password:
+        raise ValueError("Name, username, and temporary password are required")
+    if role not in ADMIN_ROLES:
+        raise ValueError("Select a supported user role")
+    if any(normalize_name(user.get("username")) == normalize_name(username) for user in USERS.values()):
+        raise ValueError("Username already exists")
+    organization_id = payload.get("organizationId") or None
+    if organization_id and organization_id not in ORGANIZATIONS:
+        raise ValueError("Assigned organization does not exist")
+    if role == "organization_user" and not organization_id:
+        raise ValueError("Organization Users must be assigned to an organization")
+    user_id = f"user-{uuid4().hex[:8]}"
+    token = f"{role}-{uuid4().hex[:12]}"
+    USERS[token] = {
+        "userId": user_id,
+        "username": username,
+        "email": str(payload.get("email") or "").strip(),
+        "password": password,
+        "name": name,
+        "role": role,
+        "organizationId": organization_id,
+        "driverId": payload.get("driverId") or None,
+        "accountStatus": "active",
+        "lastActivity": None,
+        "permissions": [],
+    }
+    return admin_user_record(token, USERS[token])
+
+
+def update_admin_user(user_id, payload):
+    token, user = find_user_record(user_id)
+    if not user:
+        raise KeyError("User not found")
+    role = normalized_role(payload.get("role", user.get("role")))
+    if role not in ADMIN_ROLES:
+        raise ValueError("Select a supported user role")
+    organization_id = payload.get("organizationId", user.get("organizationId")) or None
+    if organization_id and organization_id not in ORGANIZATIONS:
+        raise ValueError("Assigned organization does not exist")
+    if role == "organization_user" and not organization_id:
+        raise ValueError("Organization Users must be assigned to an organization")
+    for field in ["name", "username", "email", "driverId"]:
+        if field in payload:
+            user[field] = str(payload.get(field) or "").strip() or None
+    user["role"] = role
+    user["organizationId"] = organization_id
+    if "accountStatus" in payload:
+        status = normalize_name(payload.get("accountStatus"))
+        if status not in ["active", "inactive"]:
+            raise ValueError("Account status must be active or inactive")
+        user["accountStatus"] = status
+    if payload.get("password"):
+        user["password"] = str(payload["password"])
+    return admin_user_record(token, user)
+
+
+def create_admin_sensor(payload):
+    sensor_id = str(payload.get("sensorId") or "").strip()
+    if not sensor_id:
+        raise ValueError("Sensor ID is required")
+    if sensor_id in SENSORS:
+        raise ValueError("Sensor ID already exists")
+    organization_id = payload.get("organizationId") or None
+    if organization_id and organization_id not in ORGANIZATIONS:
+        raise ValueError("Assigned organization does not exist")
+    SENSORS[sensor_id] = {
+        "sensorId": sensor_id,
+        "deviceType": str(payload.get("deviceType") or "Temperature and location sensor").strip(),
+        "organizationId": organization_id,
+        "shipmentId": payload.get("shipmentId") or None,
+        "containerId": payload.get("containerId") or None,
+        "status": "healthy",
+        "connectionStatus": "online",
+        "batteryLevel": float(payload.get("batteryLevel", 100)),
+        "lastSeen": now_iso(),
+        "active": True,
+    }
+    return admin_sensor_record(SENSORS[sensor_id])
+
+
+def update_admin_sensor(sensor_id, payload):
+    sensor = SENSORS.get(sensor_id)
+    if not sensor:
+        raise KeyError("Sensor not found")
+    organization_id = payload.get("organizationId", sensor.get("organizationId")) or None
+    if organization_id and organization_id not in ORGANIZATIONS:
+        raise ValueError("Assigned organization does not exist")
+    sensor["organizationId"] = organization_id
+    for field in ["deviceType", "shipmentId", "containerId", "connectionStatus", "status"]:
+        if field in payload:
+            sensor[field] = payload.get(field) or None
+    if "batteryLevel" in payload:
+        battery = float(payload["batteryLevel"])
+        if battery < 0 or battery > 100:
+            raise ValueError("Battery level must be between 0 and 100")
+        sensor["batteryLevel"] = battery
+    if "active" in payload:
+        sensor["active"] = bool(payload["active"])
+        if not sensor["active"]:
+            sensor["status"] = "inactive"
+    return admin_sensor_record(sensor)
+
+
+def update_admin_alert(alert_id, payload):
+    status = normalize_name(payload.get("status"))
+    if status not in ALERT_STATUSES:
+        raise ValueError("Select a valid alert status")
+    for shipment in SHIPMENTS.values():
+        for index, alert in enumerate(shipment.get("alerts", [])):
+            current_id = alert.get("alertId") or f"alert-{shipment.get('shipmentId')}-{index + 1}"
+            if current_id == alert_id:
+                alert["alertId"] = current_id
+                alert["status"] = status
+                return next(item for item in admin_alert_records() if item.get("alertId") == alert_id)
+    raise KeyError("Alert not found")
+
+
+def update_admin_ticket(ticket_id, payload):
+    ticket = SUPPORT_TICKETS.get(ticket_id)
+    if not ticket:
+        raise KeyError("Ticket not found")
+    if "priority" in payload:
+        priority = normalize_name(payload.get("priority"))
+        if priority not in TICKET_PRIORITIES:
+            raise ValueError("Select a valid ticket priority")
+        ticket["priority"] = priority
+    if "assignedTo" in payload:
+        assigned_to = payload.get("assignedTo") or None
+        if assigned_to and not any(user.get("userId") == assigned_to and normalized_role(user) == "support" for user in USERS.values()):
+            raise ValueError("Assigned Support Agent does not exist")
+        ticket["assignedTo"] = assigned_to
+    if "status" in payload:
+        status = normalize_name(payload.get("status"))
+        if status not in ["new", "in_progress", "waiting_for_response", "escalated", "resolved", "closed"]:
+            raise ValueError("Select a valid ticket status")
+        ticket["status"] = status
+    ticket["updatedAt"] = now_iso()
+    return admin_ticket_record(ticket)
+
+
+def update_platform_settings(payload):
+    if "displayName" in payload:
+        display_name = str(payload.get("displayName") or "").strip()
+        if not display_name:
+            raise ValueError("Platform display name is required")
+        PLATFORM_SETTINGS["displayName"] = display_name
+    for field in ["temperatureWarningMargin", "lowBatteryThreshold", "criticalBatteryThreshold"]:
+        if field in payload:
+            value = float(payload[field])
+            if value < 0 or value > 100:
+                raise ValueError(f"{field} must be between 0 and 100")
+            PLATFORM_SETTINGS[field] = value
+    if PLATFORM_SETTINGS["criticalBatteryThreshold"] > PLATFORM_SETTINGS["lowBatteryThreshold"]:
+        raise ValueError("Critical battery threshold cannot exceed the low-battery threshold")
+    for field in ["notifyCriticalAlerts", "notifyOfflineSensors"]:
+        if field in payload:
+            PLATFORM_SETTINGS[field] = bool(payload[field])
+    return deepcopy(PLATFORM_SETTINGS)
+
+
+def find_user_record(user_id):
+    for token, user in USERS.items():
+        if user.get("userId") == user_id:
+            return token, user
+    return None, None
+
+
+def estimated_shipment_value(shipment):
+    category = normalize_name(shipment.get("productCategory") or shipment.get("medicineType"))
+    if any(label in category for label in ["blood", "pharma", "insulin", "laboratory"]):
+        return 18000
+    if any(label in category for label in ["fresh", "food", "dairy"]):
+        return 6500
+    return 4000
+
+
+def recommended_admin_action(alert, shipment):
+    if alert.get("severity") == "critical":
+        return "Escalate to operations and contact the assigned driver immediately"
+    if shipment.get("batteryLevel", 100) <= 30:
+        return "Confirm cooling-unit power and arrange battery service"
+    return "Acknowledge and continue monitoring the shipment"
+
+
+def ticket_record(ticket):
+    record = deepcopy(ticket)
+    record["organizationName"] = organization_name(ticket.get("organizationId"))
+    return record
+
+
+def count_ticket_status(tickets, status):
+    return len([ticket for ticket in tickets if ticket.get("status") == status])
+
+
+def status_counts(records, field):
+    counts = {}
+    for record in records:
+        value = record.get(field) or "unknown"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
 def sanitize_user(user):
     return {
         "userId": user.get("userId"),
@@ -1337,6 +2290,7 @@ def sanitize_user(user):
         "name": user.get("name"),
         "role": user.get("role"),
         "organizationId": user.get("organizationId"),
+        "driverId": user.get("driverId"),
         "permissions": list(user.get("permissions", [])),
     }
 
@@ -1347,3 +2301,656 @@ def get_permission_matrix():
         {"role": "support", "access": "Monitoring and coordination without user administration"},
         {"role": "hospital", "access": "Own inventory, own requests, shared network records, matching opportunities"},
     ]
+
+
+# Organization operations are deliberately scoped by the authenticated user's
+# organization ID. Frontend-supplied organization IDs are never authoritative.
+PRODUCT_CATEGORIES = {"Vaccines", "Medicine", "Blood products", "Laboratory samples", "Dairy", "Frozen food", "Meat", "Fresh produce", "Other"}
+PRODUCT_HANDLING_PROFILES = {
+    "Vaccines": {"min": 2, "max": 8, "hours": 2, "sensitivity": "critical", "instruction": "Keep refrigerated and protect from direct light."},
+    "Medicine": {"min": 2, "max": 8, "hours": 4, "sensitivity": "standard", "instruction": "Keep sealed in the cooled container."},
+    "Blood products": {"min": 2, "max": 6, "hours": 2, "sensitivity": "critical", "instruction": "Prioritize delivery and avoid unnecessary handling."},
+    "Laboratory samples": {"min": 2, "max": 8, "hours": 3, "sensitivity": "high", "instruction": "Keep upright, sealed, and continuously cooled."},
+    "Dairy": {"min": 1, "max": 4, "hours": 4, "sensitivity": "standard", "instruction": "Maintain refrigeration and keep the container closed."},
+    "Frozen food": {"min": -20, "max": -18, "hours": 6, "sensitivity": "high", "instruction": "Keep frozen and minimize door-open time."},
+    "Meat": {"min": 0, "max": 4, "hours": 4, "sensitivity": "high", "instruction": "Maintain refrigeration and prevent cross-contamination."},
+    "Fresh produce": {"min": 2, "max": 8, "hours": 6, "sensitivity": "standard", "instruction": "Keep cool, dry, and protected from crushing."},
+    "Other": {"min": 2, "max": 8, "hours": 4, "sensitivity": "standard", "instruction": "Follow the organization-provided handling instructions."},
+}
+TERMINAL_SHIPMENT_STATUSES = {"delivered", "cancelled", "rejected"}
+
+
+def organization_shipment_record(shipment):
+    record = shipment_monitor_record(shipment)
+    driver = DRIVERS.get(shipment.get("driverId")) or {}
+    sensor = SENSORS.get(shipment.get("sensorId")) or {}
+    record.update({
+        "productName": shipment.get("productName") or shipment.get("medicineType") or shipment.get("productCategory"),
+        "quantity": shipment.get("quantity"), "unit": shipment.get("unit"),
+        "estimatedValue": shipment.get("estimatedValue", estimated_shipment_value(shipment)),
+        "expirationDate": shipment.get("expirationDate"), "sensitivity": shipment.get("sensitivity", "standard"),
+        "handlingNotes": shipment.get("handlingNotes"), "deliveryInstructions": shipment.get("deliveryInstructions"),
+        "originFacilityId": shipment.get("originFacilityId"), "destinationFacilityId": shipment.get("destinationFacilityId"),
+        "departureAt": shipment.get("departureAt"), "expectedArrival": shipment.get("expectedArrival"), "acceptedAt": shipment.get("acceptedAt"),
+        "driverName": driver.get("name") or shipment.get("driverId"), "sensorStatus": sensor.get("status"),
+        "riskExplanation": (shipment.get("risk") or {}).get("reasons", []),
+        "recommendedAction": "Contact the assigned driver and protect the cold chain." if get_risk_level(shipment) in ["high", "critical"] else "Continue routine monitoring.",
+        "arrivalTime": shipment.get("arrivalTime"), "receiverName": shipment.get("receiverName"), "receiverSignature": shipment.get("receiverSignature"),
+        "destinationVerificationCode": shipment.get("destinationVerificationCode") if shipment.get("destinationVerificationStatus") != "confirmed" else None,
+        "destinationVerificationStatus": shipment.get("destinationVerificationStatus", "pending"),
+        "destinationVerifiedAt": shipment.get("destinationVerifiedAt"),
+        "deliveryNotes": shipment.get("deliveryNotes"), "driverActions": deepcopy(shipment.get("driverActions", [])),
+        "verification": deepcopy(shipment.get("verification")),
+    })
+    return record
+
+
+def _organization_shipments(organization_id):
+    return [item for item in SHIPMENTS.values() if item.get("organizationId") == organization_id]
+
+
+def _owned_record(records, record_id, organization_id, label):
+    record = records.get(record_id)
+    if not record or record.get("organizationId") != organization_id:
+        raise KeyError(f"{label} not found")
+    return record
+
+
+def _required(payload, fields):
+    missing = [field for field in fields if payload.get(field) is None or (isinstance(payload.get(field), str) and not payload.get(field).strip())]
+    if missing:
+        raise ValueError("Required fields: " + ", ".join(missing))
+
+
+def _parse_datetime(value, label):
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be a valid date and time")
+
+
+def get_organization_shipments(organization_id):
+    return [organization_shipment_record(item) for item in _organization_shipments(organization_id)]
+
+
+def get_organization_shipment(organization_id, shipment_id):
+    return organization_shipment_record(_owned_record(SHIPMENTS, shipment_id, organization_id, "Shipment"))
+
+
+def get_organization_drivers(organization_id):
+    shipments = _organization_shipments(organization_id)
+    result = []
+    for driver in DRIVERS.values():
+        if driver.get("organizationId") != organization_id:
+            continue
+        deliveries = [item for item in shipments if item.get("driverId") == driver.get("driverId")]
+        active = [item for item in deliveries if item.get("status") not in TERMINAL_SHIPMENT_STATUSES | {"awaiting_verification"}]
+        result.append({**deepcopy(driver), "currentAssignment": active[0].get("shipmentId") if active else None,
+                       "completedDeliveries": len([item for item in deliveries if item.get("status") == "delivered"]),
+                       "deliveryHistory": [organization_shipment_record(item) for item in deliveries if item.get("status") in TERMINAL_SHIPMENT_STATUSES | {"awaiting_verification"}]})
+    return result
+
+
+def get_organization_sensors(organization_id):
+    return deepcopy([item for item in SENSORS.values() if item.get("organizationId") == organization_id])
+
+
+def get_organization_alerts(organization_id):
+    return deepcopy([item for item in ORGANIZATION_ALERTS.values() if item.get("organizationId") == organization_id])
+
+
+def organization_ticket_record(ticket):
+    record = ticket_record(ticket)
+    if record.get("status") == "waiting_for_response":
+        record["status"] = "waiting_for_user"
+    record.pop("internalNotes", None)
+    record["messages"] = [deepcopy(message) for message in ticket.get("messages", []) if not message.get("internal")]
+    return record
+
+
+def get_organization_tickets(organization_id):
+    return [organization_ticket_record(item) for item in SUPPORT_TICKETS.values() if item.get("organizationId") == organization_id]
+
+
+def get_organization_ticket(organization_id, ticket_id):
+    return organization_ticket_record(_owned_record(SUPPORT_TICKETS, ticket_id, organization_id, "Ticket"))
+
+
+def create_organization_shipment(payload, user):
+    organization_id = user["organizationId"]
+    required = ["submissionId", "productCategory", "quantity", "originFacilityId", "destinationFacilityId"]
+    _required(payload, required)
+    for existing in _organization_shipments(organization_id):
+        if existing.get("submissionId") == payload["submissionId"]:
+            return organization_shipment_record(existing), False
+    if payload["productCategory"] not in PRODUCT_CATEGORIES:
+        raise ValueError("Unsupported product category")
+    profile = PRODUCT_HANDLING_PROFILES[payload["productCategory"]]
+    try:
+        quantity = float(payload["quantity"])
+        value = float(payload.get("estimatedValue") or 0)
+        safe_min = float(payload.get("safeTemperatureMin") if payload.get("safeTemperatureMin") not in [None, ""] else profile["min"])
+        safe_max = float(payload.get("safeTemperatureMax") if payload.get("safeTemperatureMax") not in [None, ""] else profile["max"])
+    except (TypeError, ValueError):
+        raise ValueError("Quantity, value, and temperature limits must be numeric")
+    if quantity <= 0 or value < 0 or safe_min >= safe_max:
+        raise ValueError("Quantity must be positive and minimum temperature must be below maximum")
+    origin = _owned_record(FACILITIES, payload["originFacilityId"], organization_id, "Origin facility")
+    destination = _owned_record(FACILITIES, payload["destinationFacilityId"], organization_id, "Destination facility")
+    if origin["facilityId"] == destination["facilityId"]:
+        raise ValueError("Origin and destination must be different")
+    departure_value = payload.get("departureAt") or (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    departure = _parse_datetime(departure_value, "Departure")
+    arrival_value = payload.get("expectedArrival") or (departure + timedelta(hours=profile["hours"])).isoformat()
+    arrival = _parse_datetime(arrival_value, "Expected arrival")
+    if arrival <= departure:
+        raise ValueError("Expected arrival must be after departure")
+    driver_id = payload.get("driverId") or next((item["driverId"] for item in DRIVERS.values() if item.get("organizationId") == organization_id and item.get("status") in ["available", "assigned"]), None)
+    driver = _owned_record(DRIVERS, driver_id, organization_id, "Available driver")
+    if driver.get("status") not in ["available", "assigned"]:
+        raise ValueError("Selected driver is not available")
+    vehicle_id = payload.get("vehicleId") or driver.get("vehicleId") or next((item["vehicleId"] for item in VEHICLES.values() if item.get("organizationId") == organization_id and item.get("status") == "available"), None)
+    sensor_id = payload.get("sensorId") or next((item["sensorId"] for item in SENSORS.values() if item.get("organizationId") == organization_id and item.get("status") != "offline" and not item.get("shipmentId")), None)
+    vehicle = _owned_record(VEHICLES, vehicle_id, organization_id, "Available refrigerated vehicle")
+    sensor = _owned_record(SENSORS, sensor_id, organization_id, "Available sensor")
+    if sensor.get("status") == "offline":
+        raise ValueError("Selected sensor is offline")
+    shipment_id = str(payload.get("shipmentId") or f"ship-{organization_id[:3]}-{uuid4().hex[:6]}").lower()
+    if shipment_id in SHIPMENTS:
+        raise ValueError("Shipment ID already exists")
+    timestamp = now_iso()
+    initial_temperature = round((safe_min + safe_max) / 2, 1)
+    initial_reading = {"timestamp": timestamp, "temperature": initial_temperature, "batteryLevel": sensor.get("batteryLevel"), "gps": origin.get("gps")}
+    shipment = {
+        "shipmentId": shipment_id, "id": shipment_id, "submissionId": payload["submissionId"], "organizationId": organization_id,
+        "productName": str(payload.get("productName") or payload["productCategory"]).strip(), "medicineType": str(payload.get("productName") or payload["productCategory"]).strip(), "productCategory": payload["productCategory"],
+        "quantity": quantity, "unit": payload.get("unit") or "units", "estimatedValue": value, "safeTemperatureMin": safe_min, "safeTemperatureMax": safe_max,
+        "expirationDate": payload.get("expirationDate"), "sensitivity": payload.get("sensitivity") or profile["sensitivity"], "handlingNotes": payload.get("handlingNotes") or profile["instruction"],
+        "originFacilityId": origin["facilityId"], "origin": origin["name"], "originGps": origin.get("gps"),
+        "destinationFacilityId": destination["facilityId"], "destination": destination["name"], "destinationHospitalName": destination["name"], "destinationGps": destination.get("gps"),
+        "departureAt": departure_value, "expectedArrival": arrival_value, "deliveryInstructions": payload.get("deliveryInstructions") or profile["instruction"],
+        "driverId": driver["driverId"], "vehicleId": vehicle["vehicleId"], "containerId": vehicle["vehicleId"], "sensorId": sensor["sensorId"],
+        "status": "pending", "riskLevel": "low", "risk": {"score": 0, "level": "low", "reasons": ["Waiting for Driver acceptance"]},
+        "destinationVerificationCode": f"{randbelow(1000000):06d}", "destinationVerificationStatus": "pending",
+        "temperature": initial_temperature, "batteryLevel": sensor.get("batteryLevel"), "coolingUnitStatus": "normal", "latestReading": initial_reading,
+        "routeProgress": 0, "currentLocation": origin["name"], "lastUpdated": timestamp, "alerts": [], "readings": [initial_reading],
+        "timeline": [{"timestamp": timestamp, "label": f"Delivery request sent to {driver['name']}"}],
+    }
+    SHIPMENTS[shipment_id] = shipment
+    driver["status"] = "assigned"
+    sensor["shipmentId"] = shipment_id
+    return organization_shipment_record(shipment), True
+
+
+def assign_organization_driver(organization_id, shipment_id, payload):
+    shipment = _owned_record(SHIPMENTS, shipment_id, organization_id, "Shipment")
+    if shipment.get("status") not in ["planned", "pending"]:
+        raise ValueError("Driver may only be changed before the trip begins")
+    driver = _owned_record(DRIVERS, payload.get("driverId"), organization_id, "Driver")
+    if driver.get("status") not in ["available", "assigned"]:
+        raise ValueError("Selected driver is not available")
+    shipment["driverId"] = driver["driverId"]
+    shipment.setdefault("timeline", []).append({"timestamp": now_iso(), "label": f"Driver assigned: {driver['name']}"})
+    driver["status"] = "assigned"
+    return organization_shipment_record(shipment)
+
+
+def update_organization_driver(organization_id, driver_id, payload):
+    driver = _owned_record(DRIVERS, driver_id, organization_id, "Driver")
+    status = payload.get("status")
+    if status not in ["available", "unavailable"]:
+        raise ValueError("Availability must be available or unavailable")
+    active = [item for item in _organization_shipments(organization_id) if item.get("driverId") == driver_id and item.get("status") in ["in_transit", "active", "at_risk"]]
+    if active:
+        raise ValueError("Availability cannot change during an active trip")
+    driver["status"] = status
+    return deepcopy(driver)
+
+
+def update_organization_alert(organization_id, alert_id, payload, user):
+    alert = _owned_record(ORGANIZATION_ALERTS, alert_id, organization_id, "Alert")
+    status = payload.get("status")
+    if status not in ["new", "acknowledged", "action_taken", "escalated", "resolved"]:
+        raise ValueError("Invalid alert status")
+    transitions = {
+        "new": {"acknowledged", "action_taken", "escalated", "resolved"},
+        "acknowledged": {"action_taken", "escalated", "resolved"},
+        "action_taken": {"escalated", "resolved"},
+        "escalated": {"action_taken", "resolved"},
+        "resolved": set(),
+    }
+    if status != alert.get("status") and status not in transitions.get(alert.get("status", "new"), set()):
+        raise ValueError("Invalid alert status transition")
+    timestamp = now_iso()
+    alert["status"], alert["updatedAt"] = status, timestamp
+    if payload.get("driverResponse"):
+        alert["driverResponse"] = str(payload["driverResponse"]).strip()
+    ticket = None
+    if status == "escalated":
+        linked = next((item for item in SUPPORT_TICKETS.values() if item.get("alertId") == alert_id and item.get("organizationId") == organization_id), None)
+        if not linked:
+            ticket_id = f"ticket-{uuid4().hex[:6]}"
+            linked = {"ticketId": ticket_id, "organizationId": organization_id, "shipmentId": alert.get("shipmentId"), "alertId": alert_id,
+                      "subject": f"Escalated {alert.get('type')} alert", "category": "temperature_alert", "priority": alert.get("severity", "high"),
+                      "status": "escalated", "requester": user.get("name"), "reportingUserId": user.get("userId"), "createdAt": timestamp, "updatedAt": timestamp,
+                      "summary": alert.get("explanation"), "messages": [{"author": user.get("name"), "timestamp": now_iso(), "body": alert.get("explanation"), "internal": False}]}
+            SUPPORT_TICKETS[ticket_id] = linked
+        alert["ticketId"] = linked["ticketId"]
+        ticket = organization_ticket_record(linked)
+    shipment = SHIPMENTS.get(alert.get("shipmentId"))
+    if shipment:
+        shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Alert {status.replace('_', ' ')} by {user.get('name')}"})
+    return deepcopy(alert), ticket
+
+
+def create_organization_ticket(organization_id, payload, user):
+    _required(payload, ["category", "description", "urgency"])
+    if payload.get("shipmentId"):
+        _owned_record(SHIPMENTS, payload["shipmentId"], organization_id, "Shipment")
+    if payload.get("alertId"):
+        _owned_record(ORGANIZATION_ALERTS, payload["alertId"], organization_id, "Alert")
+    if payload["urgency"] not in ["low", "medium", "high", "critical"]:
+        raise ValueError("Invalid ticket urgency")
+    categories = {"sensor_problem", "temperature_alert", "cooling_problem", "shipment_issue", "driver_issue", "login_or_account_issue", "incorrect_data", "other"}
+    if payload["category"] not in categories:
+        raise ValueError("Invalid ticket category")
+    ticket_id = f"ticket-{uuid4().hex[:6]}"
+    timestamp = now_iso()
+    ticket = {"ticketId": ticket_id, "organizationId": organization_id, "shipmentId": payload.get("shipmentId"), "alertId": payload.get("alertId"),
+              "subject": payload.get("subject") or payload["category"].replace("_", " ").title(), "category": payload["category"], "priority": payload["urgency"],
+              "status": "new", "requester": user.get("name"), "createdAt": timestamp, "updatedAt": timestamp, "summary": str(payload["description"]).strip(),
+              "messages": [{"author": user.get("name"), "timestamp": timestamp, "body": str(payload["description"]).strip(), "internal": False}]}
+    SUPPORT_TICKETS[ticket_id] = ticket
+    if payload.get("shipmentId"):
+        SHIPMENTS[payload["shipmentId"]].setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Support ticket created: {ticket_id}"})
+    return organization_ticket_record(ticket)
+
+
+def add_organization_ticket_message(organization_id, ticket_id, payload, user):
+    ticket = _owned_record(SUPPORT_TICKETS, ticket_id, organization_id, "Ticket")
+    _required(payload, ["message"])
+    ticket.setdefault("messages", []).append({"author": user.get("name"), "timestamp": now_iso(), "body": str(payload["message"]).strip(), "internal": False})
+    ticket["updatedAt"] = now_iso()
+    if ticket.get("status") in ["waiting_for_user", "waiting_for_response"]:
+        ticket["status"] = "in_progress"
+    return organization_ticket_record(ticket)
+
+
+def verify_organization_delivery(organization_id, shipment_id, payload, user):
+    shipment = _owned_record(SHIPMENTS, shipment_id, organization_id, "Shipment")
+    if shipment.get("status") != "awaiting_verification":
+        raise ValueError("Shipment is not awaiting verification")
+    decision, notes = payload.get("decision"), str(payload.get("notes") or "").strip()
+    if decision not in ["accept", "flag", "reject"]:
+        raise ValueError("Decision must be accept, flag, or reject")
+    if decision in ["flag", "reject"] and not notes:
+        raise ValueError("A note is required when flagging or rejecting a delivery")
+    timestamp = now_iso()
+    shipment["verification"] = {"decision": decision, "userId": user.get("userId"), "userName": user.get("name"), "timestamp": timestamp, "notes": notes}
+    shipment["status"] = {"accept": "delivered", "flag": "flagged", "reject": "rejected"}[decision]
+    shipment["lastUpdated"] = timestamp
+    shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Delivery {decision}ed by {user.get('name')}"})
+    return organization_shipment_record(shipment)
+
+
+def get_organization_reports(organization_id):
+    shipments = get_organization_shipments(organization_id)
+    completed = [item for item in shipments if item.get("status") in ["delivered", "flagged", "rejected"]]
+    on_time = [item for item in completed if not item.get("arrivalTime") or not item.get("expectedArrival") or _parse_datetime(item["arrivalTime"], "Arrival") <= _parse_datetime(item["expectedArrival"], "Expected arrival")]
+    alerts = get_organization_alerts(organization_id)
+    return {"totalShipments": len(shipments), "activeShipments": len([item for item in shipments if item.get("status") in {"active", "in_transit", "at_risk", "delayed", "arrived"}]),
+            "completedShipments": len(completed), "safeShipments": len([item for item in shipments if item.get("riskLevel") == "low"]),
+            "atRiskShipments": len([item for item in shipments if item.get("riskLevel") == "high"]), "criticalShipments": len([item for item in shipments if item.get("riskLevel") == "critical"]),
+            "onTimePercentage": round(len(on_time) / len(completed) * 100) if completed else None,
+            "estimatedValueProtected": sum(float(item.get("estimatedValue") or 0) for item in shipments if item.get("status") != "rejected"),
+            "driverSummary": [{"driverId": driver["driverId"], "name": driver["name"], "completed": driver["completedDeliveries"]} for driver in get_organization_drivers(organization_id)],
+            "shipmentOutcomes": status_counts(shipments, "status"), "alertSummary": status_counts(alerts, "status")}
+
+
+DRIVER_REQUEST_STATUSES = {"planned", "pending", "assigned"}
+DRIVER_ACCEPTED_STATUSES = {"accepted"}
+DRIVER_UPCOMING_STATUSES = DRIVER_REQUEST_STATUSES | DRIVER_ACCEPTED_STATUSES
+DRIVER_ACTIVE_STATUSES = {"active", "in_transit", "at_risk", "delayed", "arrived"}
+DRIVER_COMPLETED_STATUSES = {"delivered", "awaiting_verification", "flagged", "rejected"}
+DRIVER_INCIDENT_CATEGORIES = {"vehicle_problem", "cooling_failure", "sensor_problem", "traffic_delay", "route_blocked", "container_problem", "other_problem"}
+DRIVER_ALERT_ACTIONS = {"action_completed", "problem_continues", "contact_organization", "sensor_issue"}
+
+
+def driver_shipment_record(shipment):
+    monitor = shipment_monitor_record(shipment)
+    organization = ORGANIZATIONS.get(shipment.get("organizationId")) or {}
+    return {
+        "shipmentId": shipment.get("shipmentId"),
+        "productCategory": shipment.get("productCategory") or shipment.get("medicineType") or "Cold-chain goods",
+        "pickup": shipment.get("origin") or "Pickup not assigned",
+        "pickupGps": shipment.get("originGps"),
+        "destination": shipment.get("destinationHospitalName") or shipment.get("destination") or "Destination not assigned",
+        "deadline": shipment.get("expectedArrival"),
+        "departureAt": shipment.get("departureAt"),
+        "acceptedAt": shipment.get("acceptedAt"),
+        "status": shipment.get("status") or "planned",
+        "riskLevel": shipment.get("riskLevel") or get_risk_level(shipment),
+        "safeTemperatureMin": shipment.get("safeTemperatureMin"),
+        "safeTemperatureMax": shipment.get("safeTemperatureMax"),
+        "temperature": monitor.get("temperature"),
+        "batteryLevel": monitor.get("batteryLevel"),
+        "sensorStatus": monitor.get("sensorStatus"),
+        "coolingUnitStatus": monitor.get("coolingUnitStatus"),
+        "currentLocation": monitor.get("currentLocation"),
+        "currentGps": monitor.get("currentGps"),
+        "destinationGps": monitor.get("destinationGps"),
+        "routeProgress": monitor.get("routeProgress", 0),
+        "lastUpdated": monitor.get("lastUpdated"),
+        "organizationName": organization.get("name"),
+        "organizationContact": organization.get("contact"),
+        "specialHandlingInstructions": shipment.get("deliveryInstructions") or shipment.get("handlingNotes") or "Keep the container closed and follow the assigned route.",
+        "preTripChecklist": deepcopy(shipment.get("preTripChecklist")),
+        "receiverName": shipment.get("receiverName"),
+        "receiverSignature": shipment.get("receiverSignature"),
+        "destinationVerificationStatus": shipment.get("destinationVerificationStatus", "pending"),
+        "destinationVerifiedAt": shipment.get("destinationVerifiedAt"),
+        "deliveryNotes": shipment.get("deliveryNotes"),
+        "arrivalTime": shipment.get("arrivalTime"),
+        "timeline": deepcopy(shipment.get("timeline", [])),
+    }
+
+
+def _driver_shipment(driver_id, shipment_id):
+    shipment = SHIPMENTS.get(shipment_id)
+    if not shipment or shipment.get("driverId") != driver_id:
+        raise KeyError("Delivery not found")
+    return shipment
+
+
+def get_driver_delivery(driver_id, shipment_id):
+    return driver_shipment_record(_driver_shipment(driver_id, shipment_id))
+
+
+def get_driver_alerts(driver_id):
+    assigned_ids = {item.get("shipmentId") for item in SHIPMENTS.values() if item.get("driverId") == driver_id}
+    alerts = []
+    for alert in ORGANIZATION_ALERTS.values():
+        if alert.get("shipmentId") not in assigned_ids or alert.get("status") == "resolved":
+            continue
+        alerts.append({
+            "alertId": alert.get("alertId"), "shipmentId": alert.get("shipmentId"), "severity": alert.get("severity"),
+            "type": alert.get("type"), "message": alert.get("explanation"),
+            "instruction": "Check that cooling is active and keep the container closed." if "temperature" in str(alert.get("type", "")).lower() else alert.get("recommendedAction"),
+            "status": alert.get("driverStatus") or "requires_action", "driverResponse": alert.get("driverResponse"),
+            "updatedAt": alert.get("updatedAt") or alert.get("detectedAt"),
+        })
+    return deepcopy(sorted(alerts, key=lambda item: ({"critical": 0, "high": 1, "medium": 2}.get(item.get("severity"), 3), item.get("updatedAt") or "")))
+
+
+def get_driver_support_tickets(driver_id):
+    return [organization_ticket_record(item) for item in SUPPORT_TICKETS.values() if item.get("driverId") == driver_id]
+
+
+def start_driver_delivery(driver_id, shipment_id, payload, user):
+    shipment = _driver_shipment(driver_id, shipment_id)
+    if shipment.get("status") not in DRIVER_ACCEPTED_STATUSES:
+        raise ValueError("Accept the delivery request before starting the trip")
+    checks = payload.get("checks") if isinstance(payload.get("checks"), dict) else {}
+    required = ["shipmentCollected", "containerClosed", "sensorConnected", "coolingActive", "vehicleReady"]
+    if not all(checks.get(item) is True for item in required):
+        raise ValueError("Complete every pre-trip check before starting the delivery")
+    timestamp = now_iso()
+    shipment["preTripChecklist"] = {**{item: True for item in required}, "confirmedBy": user.get("userId"), "confirmedAt": timestamp}
+    shipment["status"] = "in_transit"
+    shipment["lastUpdated"] = timestamp
+    shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Delivery started by {user.get('name')}"})
+    if driver_id in DRIVERS:
+        DRIVERS[driver_id]["status"] = "on_route"
+    return driver_shipment_record(shipment)
+
+
+def accept_driver_delivery(driver_id, shipment_id, user):
+    shipment = _driver_shipment(driver_id, shipment_id)
+    if shipment.get("status") not in DRIVER_REQUEST_STATUSES:
+        raise ValueError("This delivery request is no longer available")
+    timestamp = now_iso()
+    shipment["status"] = "accepted"
+    shipment["acceptedAt"] = timestamp
+    shipment["lastUpdated"] = timestamp
+    shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Delivery request accepted by {user.get('name')}"})
+    if driver_id in DRIVERS:
+        DRIVERS[driver_id]["status"] = "assigned"
+    return driver_shipment_record(shipment)
+
+
+def complete_driver_delivery(driver_id, shipment_id, payload, user):
+    shipment = _driver_shipment(driver_id, shipment_id)
+    if shipment.get("status") not in DRIVER_ACTIVE_STATUSES:
+        raise ValueError("Only an active delivery can be completed")
+    if payload.get("confirmedArrival") is not True:
+        raise ValueError("Confirm arrival before completing the delivery")
+    receiver_name = str(payload.get("receiverName") or "").strip()
+    if not receiver_name:
+        raise ValueError("Receiver name is required")
+    receiver_signature = str(payload.get("receiverSignature") or "").strip()
+    if not receiver_signature.startswith("data:image/png;base64,"):
+        raise ValueError("Receiver signature is required")
+    if len(receiver_signature) > 250000:
+        raise ValueError("Receiver signature is too large")
+    destination_code = str(payload.get("destinationVerificationCode") or "").strip()
+    if destination_code != str(shipment.get("destinationVerificationCode") or ""):
+        raise ValueError("The destination handoff code is incorrect")
+    timestamp = now_iso()
+    shipment["receiverName"] = receiver_name
+    shipment["receiverSignature"] = receiver_signature
+    shipment["destinationVerificationStatus"] = "confirmed"
+    shipment["destinationVerifiedAt"] = timestamp
+    shipment["destinationVerifiedBy"] = receiver_name
+    shipment["deliveryNotes"] = str(payload.get("deliveryNotes") or "").strip()
+    shipment["arrivalTime"] = timestamp
+    shipment["status"] = "awaiting_verification"
+    shipment["lastUpdated"] = timestamp
+    shipment.setdefault("driverActions", []).append("Confirmed arrival and receiver")
+    shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Destination handoff confirmed by {receiver_name}"})
+    shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Delivery completed by {user.get('name')}; awaiting organization verification"})
+    remaining_active = [item for item in SHIPMENTS.values() if item.get("driverId") == driver_id and item.get("shipmentId") != shipment_id and item.get("status") in DRIVER_ACTIVE_STATUSES]
+    if not remaining_active and driver_id in DRIVERS:
+        DRIVERS[driver_id]["status"] = "available"
+    return driver_shipment_record(shipment)
+
+
+def respond_to_driver_alert(driver_id, alert_id, payload, user):
+    alert = ORGANIZATION_ALERTS.get(alert_id)
+    if not alert:
+        raise KeyError("Alert not found")
+    _driver_shipment(driver_id, alert.get("shipmentId"))
+    action = payload.get("action")
+    if action not in DRIVER_ALERT_ACTIONS:
+        raise ValueError("Invalid alert response")
+    labels = {
+        "action_completed": "Driver completed the recommended action",
+        "problem_continues": "Driver reports that the problem continues",
+        "contact_organization": "Driver requested organization contact",
+        "sensor_issue": "Driver reported a sensor issue",
+    }
+    alert["driverStatus"] = action
+    alert["driverResponse"] = labels[action]
+    alert["driverUserId"] = user.get("userId")
+    timestamp = now_iso()
+    alert["updatedAt"] = timestamp
+    shipment = SHIPMENTS.get(alert.get("shipmentId"))
+    if shipment:
+        shipment.setdefault("driverActions", []).append(labels[action])
+        shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": labels[action]})
+    return next(item for item in get_driver_alerts(driver_id) if item.get("alertId") == alert_id)
+
+
+def create_driver_incident(driver_id, payload, user):
+    _required(payload, ["category", "description", "shipmentId"])
+    if payload.get("category") not in DRIVER_INCIDENT_CATEGORIES:
+        raise ValueError("Invalid incident category")
+    shipment = _driver_shipment(driver_id, payload.get("shipmentId"))
+    incident_id = f"incident-{uuid4().hex[:6]}"
+    incident = {
+        "incidentId": incident_id, "driverId": driver_id, "organizationId": shipment.get("organizationId"),
+        "shipmentId": shipment.get("shipmentId"), "category": payload.get("category"),
+        "description": str(payload.get("description")).strip(),
+        "location": payload.get("location") or shipment.get("currentLocation") or "Location unavailable",
+        "status": "reported", "reportedBy": user.get("userId"), "reportedAt": now_iso(),
+    }
+    DRIVER_INCIDENTS[incident_id] = incident
+    shipment.setdefault("driverActions", []).append(f"Incident reported: {payload.get('category').replace('_', ' ')}")
+    shipment.setdefault("timeline", []).append({"timestamp": incident["reportedAt"], "label": f"Driver incident reported: {payload.get('category').replace('_', ' ')}"})
+    return deepcopy(incident)
+
+
+def create_driver_support_ticket(driver_id, payload, user):
+    _required(payload, ["issueType", "message"])
+    issue_types = {"delivery_help", "temperature_alert", "cooling_problem", "sensor_problem", "vehicle_problem", "route_problem", "other"}
+    if payload.get("issueType") not in issue_types:
+        raise ValueError("Invalid support issue type")
+    driver = DRIVERS.get(driver_id)
+    shipment = None
+    if payload.get("shipmentId"):
+        shipment = _driver_shipment(driver_id, payload.get("shipmentId"))
+    ticket_id = f"ticket-{uuid4().hex[:6]}"
+    timestamp = now_iso()
+    ticket = {
+        "ticketId": ticket_id, "organizationId": (shipment or driver or {}).get("organizationId"), "shipmentId": payload.get("shipmentId") or None,
+        "driverId": driver_id, "subject": payload.get("issueType").replace("_", " ").title(), "category": payload.get("issueType"),
+        "priority": "high" if payload.get("issueType") in ["temperature_alert", "cooling_problem"] else "medium", "status": "new",
+        "requester": user.get("name"), "createdAt": timestamp, "updatedAt": timestamp, "summary": str(payload.get("message")).strip(),
+        "messages": [{"author": user.get("name"), "timestamp": timestamp, "body": str(payload.get("message")).strip(), "internal": False}],
+    }
+    SUPPORT_TICKETS[ticket_id] = ticket
+    if shipment:
+        shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Driver requested Support: {ticket_id}"})
+    return organization_ticket_record(ticket)
+
+
+SUPPORT_TICKET_STATUSES = {"new", "in_progress", "waiting_for_user", "escalated", "resolved"}
+SUPPORT_TICKET_PRIORITIES = {"low", "medium", "high", "critical"}
+
+
+def support_ticket_record(ticket):
+    record = deepcopy(ticket)
+    if record.get("status") == "waiting_for_response":
+        record["status"] = "waiting_for_user"
+    source_type = ticket.get("sourceType") or ("driver" if ticket.get("driverId") else "organization")
+    record["sourceType"] = source_type
+    record["sourceLabel"] = {"admin": "Admin", "driver": "Driver", "organization": "Organization"}.get(source_type, "Organization")
+    record["organizationName"] = "VITAE Platform" if source_type == "admin" else organization_name(ticket.get("organizationId"))
+    assigned = next((user for user in USERS.values() if user.get("userId") == ticket.get("assignedTo")), None)
+    record["assignedAgentName"] = assigned.get("name") if assigned else "Unassigned"
+    record["createdAt"] = ticket.get("createdAt") or ticket.get("updatedAt")
+    messages = [deepcopy(item) for item in ticket.get("messages", []) if not item.get("internal")]
+    if not messages and ticket.get("summary"):
+        messages = [{"author": ticket.get("requester") or "Reporting user", "timestamp": record["createdAt"], "body": ticket.get("summary"), "internal": False}]
+    record["messages"] = messages
+    record["internalNotes"] = deepcopy(ticket.get("internalNotes", []))
+    record["shipmentContext"] = support_shipment_context(ticket.get("shipmentId"))
+    return record
+
+
+def support_shipment_context(shipment_id):
+    shipment = SHIPMENTS.get(shipment_id)
+    if not shipment:
+        return None
+    monitor = shipment_monitor_record(shipment)
+    alerts = [deepcopy(item) for item in ORGANIZATION_ALERTS.values() if item.get("shipmentId") == shipment_id]
+    return {
+        "shipmentId": shipment_id, "organizationId": shipment.get("organizationId"), "organizationName": organization_name(shipment.get("organizationId")),
+        "driverId": shipment.get("driverId"), "driverName": (DRIVERS.get(shipment.get("driverId")) or {}).get("name"),
+        "status": shipment.get("status"), "currentLocation": monitor.get("currentLocation"),
+        "temperature": monitor.get("temperature"), "safeTemperatureMin": shipment.get("safeTemperatureMin"), "safeTemperatureMax": shipment.get("safeTemperatureMax"),
+        "sensorId": shipment.get("sensorId"), "sensorStatus": monitor.get("sensorStatus"), "batteryLevel": monitor.get("batteryLevel"),
+        "lastUpdated": monitor.get("lastUpdated"), "recentAlerts": alerts[-4:], "actionsTaken": deepcopy(shipment.get("driverActions", [])),
+    }
+
+
+def get_support_shipment_records():
+    return [context for context in [support_shipment_context(item.get("shipmentId")) for item in SHIPMENTS.values()] if context]
+
+
+def get_support_organization_records():
+    records = []
+    for organization in ORGANIZATIONS.values():
+        tickets = [support_ticket_record(item) for item in SUPPORT_TICKETS.values() if item.get("organizationId") == organization.get("organizationId")]
+        records.append({
+            "organizationId": organization.get("organizationId"), "name": organization.get("name"), "type": organization.get("type"),
+            "contact": organization.get("contact"), "region": organization.get("region"),
+            "openTickets": len([item for item in tickets if item.get("status") != "resolved"]),
+            "ticketHistory": [{key: item.get(key) for key in ["ticketId", "subject", "summary", "priority", "status", "updatedAt", "organizationName"]} for item in tickets],
+        })
+    return records
+
+
+def support_knowledge_base():
+    return [
+        {"articleId": "kb-sensor-offline", "title": "Sensor offline", "category": "Sensor", "summary": "Check power, container pairing, and last-seen time before arranging replacement.", "steps": ["Confirm sensor power", "Verify container pairing", "Check last telemetry time", "Escalate if offline for more than 15 minutes"]},
+        {"articleId": "kb-low-battery", "title": "Low cooling battery", "category": "Cooling", "summary": "Keep the container closed, confirm vehicle power, and arrange a safe charging stop.", "steps": ["Confirm cooling remains active", "Check vehicle power connection", "Notify the organization", "Escalate critical battery alerts"]},
+        {"articleId": "kb-missing-readings", "title": "Missing temperature readings", "category": "Sensor", "summary": "Validate connectivity and compare the sensor last-seen time with the shipment timeline.", "steps": ["Check sensor connection", "Review last-seen time", "Ask the driver to inspect the device", "Record the diagnostic result"]},
+        {"articleId": "kb-gps", "title": "Incorrect GPS location", "category": "Location", "summary": "Confirm the latest timestamp and ask the driver to verify their current route position.", "steps": ["Check update timestamp", "Compare route progress", "Confirm location with driver", "Report persistent GPS drift"]},
+        {"articleId": "kb-cooling", "title": "Cooling issue", "category": "Cooling", "summary": "Prioritize product safety, keep the container sealed, and coordinate a backup cooling option.", "steps": ["Confirm current temperature", "Keep container closed", "Contact driver and organization", "Escalate if temperature is outside range"]},
+        {"articleId": "kb-login", "title": "Login issue", "category": "Account", "summary": "Confirm the account identifier and status without requesting or exposing the password.", "steps": ["Confirm username or email", "Check account status with Admin", "Ask user to retry sign-in", "Escalate account changes to Admin"]},
+        {"articleId": "kb-lookup", "title": "Shipment lookup issue", "category": "Shipment", "summary": "Search by shipment, organization, driver, or linked ticket and verify access scope.", "steps": ["Confirm shipment ID", "Search linked organization", "Check related tickets", "Escalate missing records to Admin"]},
+    ]
+
+
+def get_support_ticket(ticket_id):
+    ticket = SUPPORT_TICKETS.get(ticket_id)
+    if not ticket:
+        raise KeyError("Ticket not found")
+    return support_ticket_record(ticket)
+
+
+def add_support_ticket_reply(ticket_id, payload, user):
+    ticket = SUPPORT_TICKETS.get(ticket_id)
+    if not ticket:
+        raise KeyError("Ticket not found")
+    _required(payload, ["message"])
+    timestamp = now_iso()
+    ticket.setdefault("messages", []).append({"author": user.get("name"), "authorUserId": user.get("userId"), "timestamp": timestamp, "body": str(payload.get("message")).strip(), "internal": False})
+    ticket["status"] = "waiting_for_user" if payload.get("requestMoreInfo") is True else "in_progress" if ticket.get("status") == "new" else ticket.get("status")
+    ticket["updatedAt"] = timestamp
+    return support_ticket_record(ticket)
+
+
+def add_support_internal_note(ticket_id, payload, user):
+    ticket = SUPPORT_TICKETS.get(ticket_id)
+    if not ticket:
+        raise KeyError("Ticket not found")
+    _required(payload, ["note"])
+    ticket.setdefault("internalNotes", []).append({"author": user.get("name"), "authorUserId": user.get("userId"), "timestamp": now_iso(), "body": str(payload.get("note")).strip()})
+    ticket["updatedAt"] = now_iso()
+    return support_ticket_record(ticket)
+
+
+def update_support_ticket(ticket_id, payload, user):
+    ticket = SUPPORT_TICKETS.get(ticket_id)
+    if not ticket:
+        raise KeyError("Ticket not found")
+    if ticket.get("status") == "resolved" and payload.get("status") not in [None, "resolved"]:
+        raise ValueError("Resolved tickets cannot be reopened in this MVP")
+    if "priority" in payload:
+        priority = normalize_name(payload.get("priority"))
+        if priority not in SUPPORT_TICKET_PRIORITIES:
+            raise ValueError("Invalid ticket priority")
+        ticket["priority"] = priority
+    if "status" in payload:
+        status = normalize_name(payload.get("status"))
+        if status == "waiting_for_response":
+            status = "waiting_for_user"
+        if status not in SUPPORT_TICKET_STATUSES:
+            raise ValueError("Invalid ticket status")
+        if status == "resolved":
+            summary = str(payload.get("resolutionSummary") or ticket.get("resolutionSummary") or "").strip()
+            if not summary:
+                raise ValueError("Resolution summary is required")
+            ticket["resolutionSummary"] = summary
+            ticket["resolvedAt"] = now_iso()
+        if status == "escalated":
+            ticket["escalatedToAdmin"] = True
+            ticket["escalatedBy"] = user.get("userId")
+            ticket["escalatedAt"] = now_iso()
+        ticket["status"] = status
+    if "resolutionSummary" in payload and str(payload.get("resolutionSummary") or "").strip():
+        ticket["resolutionSummary"] = str(payload.get("resolutionSummary")).strip()
+    ticket["updatedAt"] = now_iso()
+    return support_ticket_record(ticket)

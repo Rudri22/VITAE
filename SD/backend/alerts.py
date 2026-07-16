@@ -13,7 +13,7 @@ def build_alerts(shipment, reading, risk, ml_prediction, nearest_hospital):
 
     ml_risk_level = ml_prediction.get("riskLevel") if isinstance(ml_prediction, dict) else None
     if ml_risk_level in ["high", "critical"]:
-        destination = nearest_hospital["name"] if nearest_hospital else "the nearest available hospital"
+        destination = nearest_hospital["name"] if nearest_hospital else "the nearest compatible facility"
         alerts.append({
             "type": "ML_SPOILAGE_RISK",
             "severity": ml_risk_level,
