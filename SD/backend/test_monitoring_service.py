@@ -66,6 +66,39 @@ class MonitoringServiceTests(unittest.TestCase):
         self.assertEqual(snapshot.open_alert_count, 2)
         self.assertIs(snapshot.latest_alert, at_risk.alert)
 
+    def test_acknowledged_alert_is_active_but_resolved_alert_is_history_only(self):
+        self.operational_service.process(self.raw_sample("safe", 0, 6.0))
+        result = self.operational_service.process(
+            self.raw_sample("monitor", 10, 9.0)
+        )
+        alert = result.alert
+        acknowledged = self.alert_repository.acknowledge_alert(
+            alert.alert_id,
+            actor_id="driver-user",
+            acknowledged_at=alert.detected_at + timedelta(minutes=1),
+        )
+        acknowledged_snapshot = self.monitoring_service.get_live_snapshot(
+            SIMULATION_LOT_TRIP_ID
+        )
+        self.assertEqual(acknowledged_snapshot.open_alert_count, 1)
+        self.assertIs(acknowledged_snapshot.latest_alert, acknowledged)
+
+        resolved = self.alert_repository.resolve_alert(
+            alert.alert_id,
+            actor_id="organization-user",
+            resolved_at=alert.detected_at + timedelta(minutes=2),
+            resolution_note="Reviewed and closed",
+        )
+        resolved_snapshot = self.monitoring_service.get_live_snapshot(
+            SIMULATION_LOT_TRIP_ID
+        )
+        self.assertEqual(resolved_snapshot.open_alert_count, 0)
+        self.assertIsNone(resolved_snapshot.latest_alert)
+        self.assertEqual(
+            self.monitoring_service.list_alerts(SIMULATION_LOT_TRIP_ID),
+            (resolved,),
+        )
+
     def test_reads_are_side_effect_free(self):
         self.monitoring_service.get_live_snapshot(SIMULATION_LOT_TRIP_ID)
         self.monitoring_service.list_alerts(SIMULATION_LOT_TRIP_ID)

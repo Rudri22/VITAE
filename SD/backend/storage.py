@@ -2428,6 +2428,24 @@ def get_organization_shipment(organization_id, shipment_id):
     return organization_shipment_record(_owned_record(SHIPMENTS, shipment_id, organization_id, "Shipment"))
 
 
+def get_v2_alert_shipment_access(lot_trip_id):
+    """Return the legacy ownership link used to authorize V2 alert commands."""
+    matches = [
+        shipment
+        for shipment in SHIPMENTS.values()
+        if shipment.get("lotTripId") == lot_trip_id
+    ]
+    if len(matches) != 1:
+        return None
+    shipment = matches[0]
+    return {
+        "shipmentId": shipment.get("shipmentId"),
+        "lotTripId": shipment.get("lotTripId"),
+        "organizationId": shipment.get("organizationId"),
+        "driverId": shipment.get("driverId"),
+    }
+
+
 def get_organization_drivers(organization_id):
     shipments = _organization_shipments(organization_id)
     result = []

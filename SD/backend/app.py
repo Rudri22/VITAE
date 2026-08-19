@@ -41,6 +41,7 @@ try:
         get_organization_shipments,
         get_organization_ticket,
         get_organization_tickets,
+        get_v2_alert_shipment_access,
         get_support_foundation_dashboard_data,
         get_support_ticket,
         get_shipment_by_id,
@@ -100,6 +101,7 @@ except ImportError:
         get_organization_shipments,
         get_organization_ticket,
         get_organization_tickets,
+        get_v2_alert_shipment_access,
         get_support_foundation_dashboard_data,
         get_support_ticket,
         get_shipment_by_id,
@@ -124,7 +126,17 @@ except ImportError:
     )
 
 try:
-    from .alerting import InMemoryAlertRepository
+    from .alert_lifecycle_service import (
+        AlertActor,
+        AlertActorRole,
+        AlertLifecycleAccessDeniedError,
+        AlertLifecycleService,
+    )
+    from .alerting import (
+        AlertNotFoundError,
+        AlertTransitionError,
+        InMemoryAlertRepository,
+    )
     from .monitoring_service import LotTripNotFoundError, MonitoringService
     from .operational_service import OperationalTelemetryService
     from .product_catalog_service import ProductCatalogService
@@ -146,7 +158,17 @@ try:
     from .telemetry_processor import TelemetryProcessor
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
-    from alerting import InMemoryAlertRepository
+    from alert_lifecycle_service import (
+        AlertActor,
+        AlertActorRole,
+        AlertLifecycleAccessDeniedError,
+        AlertLifecycleService,
+    )
+    from alerting import (
+        AlertNotFoundError,
+        AlertTransitionError,
+        InMemoryAlertRepository,
+    )
     from monitoring_service import LotTripNotFoundError, MonitoringService
     from operational_service import OperationalTelemetryService
     from product_catalog_service import ProductCatalogService
@@ -213,6 +235,10 @@ V2_MONITORING_SERVICE = MonitoringService(
     V2_STATE_REPOSITORY,
     V2_ALERT_REPOSITORY,
 )
+V2_ALERT_LIFECYCLE_SERVICE = AlertLifecycleService(
+    V2_ALERT_REPOSITORY,
+    get_v2_alert_shipment_access,
+)
 V2_SHIPMENT_REGISTRATION_SERVICE = V2ShipmentRegistrationService(
     V2_STATE_REPOSITORY
 )
@@ -262,6 +288,12 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/v2/sensor-data":
             self.handle_v2_sensor_data()
+            return
+
+        alert_command = self.parse_v2_alert_command(path)
+        if alert_command is not None:
+            lot_trip_id, alert_id, command = alert_command
+            self.handle_v2_alert_command(lot_trip_id, alert_id, command)
             return
 
         if path == "/api/shipments":
@@ -423,6 +455,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/v2/monitor/alerts/"):
             lot_trip_id = path.removeprefix("/api/v2/monitor/alerts/")
             self.handle_v2_monitor_alerts(lot_trip_id)
+            return
+
+        alert_read = self.parse_v2_alert_read(path)
+        if alert_read is not None:
+            lot_trip_id, alert_id = alert_read
+            self.handle_v2_alert_read(lot_trip_id, alert_id)
             return
 
         if path == "/api/me":
@@ -602,6 +640,146 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "count": len(alerts),
                 "alerts": [serialize_alert(alert) for alert in alerts],
             }
+        )
+
+    @staticmethod
+    def parse_v2_alert_command(path):
+        parts = path.strip("/").split("/")
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v2", "alerts"]
+            and parts[5] in {"acknowledge", "actions", "resolve"}
+        ):
+            return parts[3], parts[4], parts[5]
+        return None
+
+    @staticmethod
+    def parse_v2_alert_read(path):
+        parts = path.strip("/").split("/")
+        if len(parts) == 4 and parts[:3] == ["api", "v2", "alerts"]:
+            return parts[3], None
+        if len(parts) == 5 and parts[:3] == ["api", "v2", "alerts"]:
+            return parts[3], parts[4]
+        return None
+
+    def handle_v2_alert_read(self, lot_trip_id, alert_id):
+        actor = self.require_v2_alert_actor()
+        if actor is None:
+            return
+        try:
+            if alert_id is None:
+                alerts = V2_ALERT_LIFECYCLE_SERVICE.list_alerts(
+                    lot_trip_id,
+                    actor,
+                )
+                self.send_json(
+                    {
+                        "success": True,
+                        "lotTripId": lot_trip_id,
+                        "count": len(alerts),
+                        "alerts": [serialize_alert(alert) for alert in alerts],
+                    }
+                )
+            else:
+                alert = V2_ALERT_LIFECYCLE_SERVICE.get_alert(
+                    lot_trip_id,
+                    alert_id,
+                    actor,
+                )
+                self.send_json({"success": True, "alert": serialize_alert(alert)})
+        except AlertNotFoundError:
+            self.send_v2_alert_error(404, "ALERT_NOT_FOUND", "Alert does not exist")
+        except AlertLifecycleAccessDeniedError:
+            self.send_v2_alert_error(
+                403,
+                "ALERT_ACCESS_DENIED",
+                "You do not have access to this lot trip",
+            )
+        except ValueError as error:
+            self.send_v2_alert_error(400, "INVALID_ALERT_SCOPE", str(error))
+
+    def handle_v2_alert_command(self, lot_trip_id, alert_id, command):
+        actor = self.require_v2_alert_actor()
+        if actor is None:
+            return
+        try:
+            payload = self.read_json_body()
+            if command == "acknowledge":
+                _require_command_fields(payload, set(), set())
+                alert = V2_ALERT_LIFECYCLE_SERVICE.acknowledge(
+                    lot_trip_id,
+                    alert_id,
+                    actor,
+                )
+            elif command == "actions":
+                _require_command_fields(payload, {"description"}, {"description"})
+                alert = V2_ALERT_LIFECYCLE_SERVICE.record_action(
+                    lot_trip_id,
+                    alert_id,
+                    payload["description"],
+                    actor,
+                )
+            else:
+                _require_command_fields(
+                    payload,
+                    {"resolutionNote"},
+                    {"resolutionNote"},
+                )
+                alert = V2_ALERT_LIFECYCLE_SERVICE.resolve(
+                    lot_trip_id,
+                    alert_id,
+                    payload["resolutionNote"],
+                    actor,
+                )
+            self.send_json({"success": True, "alert": serialize_alert(alert)})
+        except AlertNotFoundError:
+            self.send_v2_alert_error(
+                404,
+                "ALERT_NOT_FOUND",
+                "Alert does not exist",
+            )
+        except AlertLifecycleAccessDeniedError:
+            self.send_v2_alert_error(
+                403,
+                "ALERT_ACCESS_DENIED",
+                "You do not have access to this alert",
+            )
+        except AlertTransitionError as error:
+            self.send_v2_alert_error(409, "ALERT_TRANSITION_CONFLICT", str(error))
+        except ValueError as error:
+            self.send_v2_alert_error(400, "INVALID_ALERT_COMMAND", str(error))
+
+    def require_v2_alert_actor(self):
+        user = self.require_authenticated_user()
+        if user is None:
+            return None
+        if is_organization_user(user):
+            return AlertActor(
+                actor_id=user["userId"],
+                role=AlertActorRole.ORGANIZATION,
+                organization_id=user["organizationId"],
+            )
+        if is_driver_user(user):
+            return AlertActor(
+                actor_id=user["userId"],
+                role=AlertActorRole.DRIVER,
+                organization_id=user["organizationId"],
+                driver_id=user["driverId"],
+            )
+        self.send_v2_alert_error(
+            403,
+            "ALERT_ROLE_FORBIDDEN",
+            "Organization or Driver access is required",
+        )
+        return None
+
+    def send_v2_alert_error(self, status, code, message):
+        self.send_json(
+            {
+                "success": False,
+                "error": {"code": code, "message": message},
+            },
+            status=status,
         )
 
     def send_v2_lot_trip_not_found(self, lot_trip_id):
@@ -972,6 +1150,19 @@ def get_content_type(file_path):
 def first_form_value(form, name):
     values = form.get(name, [])
     return values[0] if values else None
+
+
+def _require_command_fields(payload, required, allowed):
+    missing = sorted(
+        field
+        for field in required
+        if not isinstance(payload.get(field), str) or not payload[field].strip()
+    )
+    unexpected = sorted(set(payload) - allowed)
+    if missing:
+        raise ValueError("Required fields: " + ", ".join(missing))
+    if unexpected:
+        raise ValueError("Unexpected fields: " + ", ".join(unexpected))
 
 
 def dashboard_path_for_role(role):

@@ -40,13 +40,14 @@ class MonitoringService:
         normalized_id = _required_lot_trip_id(lot_trip_id)
         trip = self._require_trip(normalized_id)
         alerts = self._sorted_alerts(normalized_id)
+        active_alerts = tuple(
+            alert for alert in alerts if alert.status != AlertStatus.RESOLVED
+        )
         return MonitoringSnapshot(
             trip_identity=trip,
             live_state=self._state_repository.get_live_state(normalized_id),
-            open_alert_count=sum(
-                alert.status == AlertStatus.OPEN for alert in alerts
-            ),
-            latest_alert=alerts[0] if alerts else None,
+            open_alert_count=len(active_alerts),
+            latest_alert=active_alerts[0] if active_alerts else None,
         )
 
     def list_alerts(self, lot_trip_id: str) -> Tuple[Alert, ...]:
