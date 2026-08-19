@@ -4811,12 +4811,15 @@ a:focus-visible {
 .org-v2-monitor { padding: 15px; }
 .org-v2-monitor > header { align-items: flex-start; margin-bottom: 12px; }
 .org-v2-monitor > header p { margin: 4px 0 0; color: var(--vitae-muted); font-size: .78rem; }
-.org-v2-monitor > dl { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--vitae-border); }
+.org-v2-monitor > dl { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--vitae-border); }
 .org-v2-monitor > dl > div { min-width: 0; padding: 12px 14px 2px 0; }
 .org-v2-monitor dt { color: var(--vitae-muted); font-size: .66rem; font-weight: 700; text-transform: uppercase; }
 .org-v2-monitor dd { margin: 6px 0 0; color: var(--vitae-ink); font-size: .86rem; font-weight: 700; overflow-wrap: anywhere; }
 .org-v2-monitor-stale,
 .org-v2-monitor-error { color: #9b2c2c; font-size: .72rem; font-weight: 700; }
+.vitae-status-stack { display: flex; align-items: flex-end; flex-direction: column; gap: 6px; }
+.vitae-v2-lifecycle { display: inline-flex; align-items: center; gap: 6px; color: var(--vitae-muted); font-size: .64rem; font-weight: 700; }
+.vitae-v2-lifecycle > span:first-child { white-space: nowrap; }
 .org-cockpit-workspace > .foundation-panel { align-self: start; height: auto; min-height: 0; padding: 15px; }
 .org-cockpit-workspace > .foundation-panel > header { margin-bottom: 9px; }
 .org-live-board footer,
