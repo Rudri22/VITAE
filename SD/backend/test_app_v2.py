@@ -17,7 +17,7 @@ try:
         GARDASIL_9_SOURCE_VERSION,
         GARDASIL_9_STATE,
     )
-    from .state_repository import InMemoryTelemetryStateRepository
+    from .decision_outbox import InMemoryProcessingBundleRepository
     from .telemetry_http import TelemetryHttpAdapter
     from .telemetry_processor import TelemetryProcessor
 except ImportError:
@@ -32,14 +32,14 @@ except ImportError:
         GARDASIL_9_SOURCE_VERSION,
         GARDASIL_9_STATE,
     )
-    from state_repository import InMemoryTelemetryStateRepository
+    from decision_outbox import InMemoryProcessingBundleRepository
     from telemetry_http import TelemetryHttpAdapter
     from telemetry_processor import TelemetryProcessor
 
 
 class V2SensorDataRouteTests(unittest.TestCase):
     def setUp(self):
-        state_repository = InMemoryTelemetryStateRepository()
+        state_repository = InMemoryProcessingBundleRepository()
         state_repository.register_trip(app.V2_PROTOTYPE_TRIP)
         state_repository.register_device_assignment(app.V2_PROTOTYPE_ASSIGNMENT)
         processor = TelemetryProcessor(state_repository, state_repository)

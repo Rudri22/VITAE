@@ -5,25 +5,25 @@ from typing import Mapping, Optional
 
 try:
     from .alerting import AlertRepository, InMemoryAlertRepository
+    from .decision_outbox import (
+        InMemoryProcessingBundleRepository,
+        ProcessingBundleRepository,
+    )
     from .shipment_access import (
         IdentityAccessRepository,
         InMemoryIdentityAccessRepository,
         ShipmentAccessRepository,
     )
-    from .state_repository import (
-        InMemoryTelemetryStateRepository,
-        TelemetryStateRepository,
-    )
 except ImportError:
     from alerting import AlertRepository, InMemoryAlertRepository
+    from decision_outbox import (
+        InMemoryProcessingBundleRepository,
+        ProcessingBundleRepository,
+    )
     from shipment_access import (
         IdentityAccessRepository,
         InMemoryIdentityAccessRepository,
         ShipmentAccessRepository,
-    )
-    from state_repository import (
-        InMemoryTelemetryStateRepository,
-        TelemetryStateRepository,
     )
 
 
@@ -82,7 +82,7 @@ class RepositoryComposition:
     config: RepositoryConfig
     identity_repository: IdentityAccessRepository
     shipment_access_repository: ShipmentAccessRepository
-    telemetry_state_repository: TelemetryStateRepository
+    telemetry_state_repository: ProcessingBundleRepository
     alert_repository: AlertRepository
 
     @property
@@ -134,7 +134,7 @@ def compose_repositories(
         config=config,
         identity_repository=identity,
         shipment_access_repository=identity,
-        telemetry_state_repository=InMemoryTelemetryStateRepository(),
+        telemetry_state_repository=InMemoryProcessingBundleRepository(),
         alert_repository=InMemoryAlertRepository(),
     )
 

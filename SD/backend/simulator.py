@@ -4,24 +4,28 @@ from math import isfinite
 from typing import Any, Optional, Tuple
 
 try:
+    from .alerting import InMemoryAlertRepository
+    from .decision_outbox import InMemoryProcessingBundleRepository
+    from .operational_service import OperationalTelemetryService
     from .product_rules import (
         GARDASIL_9_PRESENTATION,
         GARDASIL_9_PRODUCT_ID,
         GARDASIL_9_SOURCE_VERSION,
         GARDASIL_9_STATE,
     )
-    from .state_repository import InMemoryTelemetryStateRepository
     from .telemetry import TelemetryValidationError
     from .telemetry_processor import ProcessingResult, TelemetryProcessor
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
+    from alerting import InMemoryAlertRepository
+    from decision_outbox import InMemoryProcessingBundleRepository
+    from operational_service import OperationalTelemetryService
     from product_rules import (
         GARDASIL_9_PRESENTATION,
         GARDASIL_9_PRODUCT_ID,
         GARDASIL_9_SOURCE_VERSION,
         GARDASIL_9_STATE,
     )
-    from state_repository import InMemoryTelemetryStateRepository
     from telemetry import TelemetryValidationError
     from telemetry_processor import ProcessingResult, TelemetryProcessor
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
@@ -56,7 +60,9 @@ class SimulationStep:
 @dataclass(frozen=True)
 class LocalSimulationEnvironment:
     processor: TelemetryProcessor
-    repository: InMemoryTelemetryStateRepository
+    operational_service: OperationalTelemetryService
+    repository: InMemoryProcessingBundleRepository
+    alert_repository: InMemoryAlertRepository
     device_id: str
     start_time: datetime
 
@@ -160,7 +166,7 @@ def build_local_environment(
     start_time: datetime = SIMULATION_START,
 ) -> LocalSimulationEnvironment:
     """Create an isolated processor with one explicit trip and assignment."""
-    repository = InMemoryTelemetryStateRepository()
+    repository = InMemoryProcessingBundleRepository()
     trip = TripIdentity(
         trip_id=SIMULATION_TRIP_ID,
         lot_trip_id=SIMULATION_LOT_TRIP_ID,
@@ -185,9 +191,16 @@ def build_local_environment(
     )
     repository.register_trip(trip)
     repository.register_device_assignment(assignment)
+    processor = TelemetryProcessor(repository, repository)
+    alert_repository = InMemoryAlertRepository()
     return LocalSimulationEnvironment(
-        processor=TelemetryProcessor(repository, repository),
+        processor=processor,
+        operational_service=OperationalTelemetryService(
+            processor,
+            alert_repository,
+        ),
         repository=repository,
+        alert_repository=alert_repository,
         device_id=SIMULATION_DEVICE_ID,
         start_time=start_time,
     )
@@ -218,13 +231,13 @@ def generate_samples(
 
 
 def run_scenario(
-    processor: TelemetryProcessor,
+    operational_service: OperationalTelemetryService,
     scenario: SimulationScenario,
     *,
     device_id: str,
     start_time: datetime,
 ) -> Tuple[SimulationStep, ...]:
-    """Send a complete scenario through the production-independent processor."""
+    """Send a scenario through the same operational path as V2 ingestion."""
     samples = generate_samples(
         scenario,
         device_id=device_id,
@@ -233,7 +246,7 @@ def run_scenario(
     return tuple(
         SimulationStep(
             elapsed_minutes=point.elapsed_minutes,
-            result=processor.process(payload),
+            result=operational_service.process(payload).processing_result,
         )
         for point, payload in zip(scenario.points, samples)
     )
@@ -281,7 +294,7 @@ def main() -> None:
     for scenario in BUILT_IN_SCENARIOS:
         environment = build_local_environment()
         steps = run_scenario(
-            environment.processor,
+            environment.operational_service,
             scenario,
             device_id=environment.device_id,
             start_time=environment.start_time,
@@ -291,7 +304,7 @@ def main() -> None:
     invalid_environment = build_local_environment()
     try:
         run_scenario(
-            invalid_environment.processor,
+            invalid_environment.operational_service,
             INVALID_TELEMETRY_SCENARIO,
             device_id=invalid_environment.device_id,
             start_time=invalid_environment.start_time,

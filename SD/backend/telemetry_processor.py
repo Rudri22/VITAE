@@ -59,7 +59,29 @@ class TelemetryProcessor:
         self._state_repository = state_repository
 
     def process(self, raw_sample: Mapping[str, Any]) -> ProcessingResult:
-        """Validate, evaluate, and atomically persist one telemetry sample."""
+        """Compatibility path for status-only callers without alert orchestration."""
+        result = self.prepare(raw_sample)
+        if hasattr(self._state_repository, "commit_processing_bundle"):
+            try:
+                from .decision_outbox import decision_record_from_processing_result
+            except ImportError:
+                from decision_outbox import decision_record_from_processing_result
+            self.commit_processing_bundle(
+                result,
+                decision_record_from_processing_result(result),
+                None,
+            )
+        else:
+            previous = result.previous_live_state
+            self._state_repository.commit_sample_and_state(
+                result.telemetry_record,
+                result.live_state,
+                None if previous is None else previous.revision,
+            )
+        return result
+
+    def prepare(self, raw_sample: Mapping[str, Any]) -> ProcessingResult:
+        """Validate and evaluate one sample without changing repository state."""
         sample = validate_and_normalize_telemetry(raw_sample)
 
         if self._state_repository.has_sample(sample.device_id, sample.sample_id):
@@ -108,20 +130,37 @@ class TelemetryProcessor:
             decision=decision,
             previous_live_state=previous_live_state,
         )
-        expected_revision = (
-            None if previous_live_state is None else previous_live_state.revision
-        )
-        self._state_repository.commit_sample_and_state(
-            record,
-            next_live_state,
-            expected_revision,
-        )
         return ProcessingResult(
             previous_live_state=previous_live_state,
             telemetry_record=record,
             decision=decision,
             live_state=next_live_state,
         )
+
+    def commit_processing_bundle(
+        self,
+        result: ProcessingResult,
+        decision_record,
+        alert_outbox_event,
+    ) -> None:
+        """Commit one prepared transition through the richer repository contract."""
+        commit = getattr(self._state_repository, "commit_processing_bundle", None)
+        if commit is None:
+            raise TypeError(
+                "state_repository must implement ProcessingBundleRepository"
+            )
+        previous = result.previous_live_state
+        commit(
+            result.telemetry_record,
+            result.live_state,
+            decision_record,
+            alert_outbox_event,
+            None if previous is None else previous.revision,
+        )
+
+    @property
+    def processing_repository(self):
+        return self._state_repository
 
     def _trips_referenced_by(self, assignments) -> Tuple[TripIdentity, ...]:
         trips = {}

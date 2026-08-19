@@ -3,10 +3,12 @@ from threading import RLock
 from typing import Dict, Optional, Protocol, Tuple, runtime_checkable
 
 try:
-    from .state_repository import IdentityRepository, InMemoryTelemetryStateRepository
+    from .decision_outbox import InMemoryProcessingBundleRepository
+    from .state_repository import IdentityRepository
     from .trip_identity import DeviceAssignment, TripIdentity
 except ImportError:
-    from state_repository import IdentityRepository, InMemoryTelemetryStateRepository
+    from decision_outbox import InMemoryProcessingBundleRepository
+    from state_repository import IdentityRepository
     from trip_identity import DeviceAssignment, TripIdentity
 
 
@@ -176,13 +178,13 @@ class InMemoryShipmentAccessRepository(ShipmentAccessRepository):
 
 
 class InMemoryIdentityAccessRepository(
-    InMemoryTelemetryStateRepository,
+    InMemoryProcessingBundleRepository,
     InMemoryShipmentAccessRepository,
 ):
     """Atomic in-memory identity, telemetry-state, and access composition."""
 
     def __init__(self):
-        InMemoryTelemetryStateRepository.__init__(self)
+        InMemoryProcessingBundleRepository.__init__(self)
         InMemoryShipmentAccessRepository.__init__(self)
 
     def register_trip_assignment_and_access(

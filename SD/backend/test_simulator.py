@@ -3,6 +3,11 @@ import inspect
 from datetime import datetime, timezone
 
 try:
+    from .decision_outbox import (
+        OutboxDeliveryStatus,
+        alert_outbox_event_from_candidate,
+        decision_record_from_processing_result,
+    )
     from .risk_rules import ApplicationStatus
     from .simulator import (
         RECOVERY_CUMULATIVE_SCENARIO,
@@ -25,6 +30,11 @@ try:
     from .telemetry import TelemetryValidationError
     from .telemetry_processor import ProcessingResult
 except ImportError:
+    from decision_outbox import (
+        OutboxDeliveryStatus,
+        alert_outbox_event_from_candidate,
+        decision_record_from_processing_result,
+    )
     from risk_rules import ApplicationStatus
     from simulator import (
         RECOVERY_CUMULATIVE_SCENARIO,
@@ -52,7 +62,7 @@ class SimulatorTests(unittest.TestCase):
     def run_builtin(self, scenario):
         environment = build_local_environment()
         steps = run_scenario(
-            environment.processor,
+            environment.operational_service,
             scenario,
             device_id=environment.device_id,
             start_time=environment.start_time,
@@ -69,7 +79,7 @@ class SimulatorTests(unittest.TestCase):
     def test_status_ladder_is_decided_by_real_processor(self):
         environment = build_local_environment()
         steps = run_scenario(
-            environment.processor,
+            environment.operational_service,
             STATUS_LADDER_SCENARIO,
             device_id=environment.device_id,
             start_time=environment.start_time,
@@ -85,11 +95,71 @@ class SimulatorTests(unittest.TestCase):
                 ApplicationStatus.RULE_VIOLATION,
             ],
         )
+        decisions = environment.repository.get_decision_history(
+            "sim-vitae-lot-trip-001"
+        )
+        alerts = environment.alert_repository.list_alerts(
+            lot_trip_id="sim-vitae-lot-trip-001"
+        )
+        self.assertEqual(len(decisions), 5)
+        self.assertEqual(len(alerts), 4)
+        for alert in alerts:
+            result = next(
+                step.result
+                for step in steps
+                if step.result.telemetry_record.sample_id == alert.sample_id
+            )
+            expected_event = alert_outbox_event_from_candidate(
+                decision_record_from_processing_result(result),
+                alert,
+            )
+            stored_event = environment.repository.get_outbox_event(
+                expected_event.event_id
+            )
+            self.assertEqual(
+                stored_event.delivery_status,
+                OutboxDeliveryStatus.DELIVERED,
+            )
+            self.assertEqual(stored_event.alert_candidate, alert)
+
+    def test_repeated_monitor_uses_one_transition_alert_and_outbox(self):
+        environment = build_local_environment()
+        scenario = SimulationScenario(
+            "repeated-monitor",
+            "Repeated monitor",
+            (
+                ScenarioPoint(0.0, 6.0),
+                ScenarioPoint(10.0, 9.0),
+                ScenarioPoint(20.0, 9.0),
+            ),
+        )
+        steps = run_scenario(
+            environment.operational_service,
+            scenario,
+            device_id=environment.device_id,
+            start_time=environment.start_time,
+        )
+        alerts = environment.alert_repository.list_alerts(
+            lot_trip_id="sim-vitae-lot-trip-001"
+        )
+        self.assertEqual(len(steps), 3)
+        self.assertEqual(len(alerts), 1)
+        alert_result = steps[1].result
+        expected_event = alert_outbox_event_from_candidate(
+            decision_record_from_processing_result(alert_result),
+            alerts[0],
+        )
+        self.assertEqual(
+            environment.repository.get_outbox_event(
+                expected_event.event_id
+            ).delivery_status,
+            OutboxDeliveryStatus.DELIVERED,
+        )
 
     def test_recovery_returns_safe_and_preserves_cumulative_time(self):
         environment = build_local_environment()
         steps = run_scenario(
-            environment.processor,
+            environment.operational_service,
             RECOVERY_CUMULATIVE_SCENARIO,
             device_id=environment.device_id,
             start_time=environment.start_time,
@@ -150,7 +220,7 @@ class SimulatorTests(unittest.TestCase):
         environment = build_local_environment()
         with self.assertRaises(TelemetryValidationError) as caught:
             run_scenario(
-                environment.processor,
+                environment.operational_service,
                 INVALID_TELEMETRY_SCENARIO,
                 device_id=environment.device_id,
                 start_time=environment.start_time,
@@ -239,7 +309,7 @@ class SimulatorTests(unittest.TestCase):
     def test_run_persists_every_generated_sample(self):
         environment = build_local_environment()
         steps = run_scenario(
-            environment.processor,
+            environment.operational_service,
             STATUS_LADDER_SCENARIO,
             device_id=environment.device_id,
             start_time=environment.start_time,
@@ -249,11 +319,15 @@ class SimulatorTests(unittest.TestCase):
         )
         self.assertEqual(len(history), len(STATUS_LADDER_SCENARIO.points))
         self.assertIs(history[-1], steps[-1].result.telemetry_record)
+        decisions = environment.repository.get_decision_history(
+            steps[-1].result.telemetry_record.lot_trip_id
+        )
+        self.assertEqual(len(decisions), len(steps))
 
     def test_final_live_state_is_last_simulation_result(self):
         environment = build_local_environment()
         steps = run_scenario(
-            environment.processor,
+            environment.operational_service,
             STATUS_LADDER_SCENARIO,
             device_id=environment.device_id,
             start_time=environment.start_time,
@@ -268,7 +342,7 @@ class SimulatorTests(unittest.TestCase):
         scenario = SimulationScenario("empty", "Empty", ())
         with self.assertRaises(SimulationScenarioError):
             run_scenario(
-                environment.processor,
+                environment.operational_service,
                 scenario,
                 device_id=environment.device_id,
                 start_time=environment.start_time,
@@ -284,7 +358,7 @@ class SimulatorTests(unittest.TestCase):
         )
         with self.assertRaises(SimulationScenarioError):
             run_scenario(
-                environment.processor,
+                environment.operational_service,
                 scenario,
                 device_id=environment.device_id,
                 start_time=environment.start_time,
@@ -310,7 +384,7 @@ class SimulatorTests(unittest.TestCase):
     def test_format_run_uses_processor_results(self):
         environment = build_local_environment()
         steps = run_scenario(
-            environment.processor,
+            environment.operational_service,
             STATUS_LADDER_SCENARIO,
             device_id=environment.device_id,
             start_time=environment.start_time,

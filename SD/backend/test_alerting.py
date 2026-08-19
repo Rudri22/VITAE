@@ -52,7 +52,7 @@ except ImportError:
 def ladder_results():
     environment = build_local_environment()
     steps = run_scenario(
-        environment.processor,
+        environment.operational_service,
         STATUS_LADDER_SCENARIO,
         device_id=environment.device_id,
         start_time=environment.start_time,
@@ -276,7 +276,7 @@ class AlertPolicyTests(unittest.TestCase):
             ),
         )
         steps = run_scenario(
-            environment.processor,
+            environment.operational_service,
             scenario,
             device_id=environment.device_id,
             start_time=environment.start_time,

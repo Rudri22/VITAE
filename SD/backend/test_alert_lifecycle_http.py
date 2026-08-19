@@ -11,7 +11,7 @@ try:
     from .alerting import InMemoryAlertRepository
     from .monitoring_service import MonitoringService
     from .operational_service import OperationalTelemetryService
-    from .state_repository import InMemoryTelemetryStateRepository
+    from .decision_outbox import InMemoryProcessingBundleRepository
     from .telemetry_http import TelemetryHttpAdapter
     from .telemetry_processor import TelemetryProcessor
 except ImportError:
@@ -20,14 +20,14 @@ except ImportError:
     from alerting import InMemoryAlertRepository
     from monitoring_service import MonitoringService
     from operational_service import OperationalTelemetryService
-    from state_repository import InMemoryTelemetryStateRepository
+    from decision_outbox import InMemoryProcessingBundleRepository
     from telemetry_http import TelemetryHttpAdapter
     from telemetry_processor import TelemetryProcessor
 
 
 class V2AlertLifecycleHttpTests(unittest.TestCase):
     def setUp(self):
-        state_repository = InMemoryTelemetryStateRepository()
+        state_repository = InMemoryProcessingBundleRepository()
         state_repository.register_trip(app.V2_PROTOTYPE_TRIP)
         state_repository.register_device_assignment(app.V2_PROTOTYPE_ASSIGNMENT)
         self.alert_repository = InMemoryAlertRepository()

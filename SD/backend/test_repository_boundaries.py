@@ -68,6 +68,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             shipment_access.IdentityAccessRepository,
         )
         self.assertIsInstance(combined_repository, TelemetryStateRepository)
+        self.assertIsInstance(combined_repository, ProcessingBundleRepository)
 
     def test_services_depend_on_protocol_annotations(self):
         expected = {
