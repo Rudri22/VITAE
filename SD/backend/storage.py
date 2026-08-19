@@ -2596,16 +2596,47 @@ def _commit_organization_shipment(shipment, driver, sensor):
     sensor["shipmentId"] = shipment_id
 
 
-def assign_organization_driver(organization_id, shipment_id, payload):
+def assign_organization_driver(
+    organization_id,
+    shipment_id,
+    payload,
+    v2_shipment_access_repository=None,
+):
     shipment = _owned_record(SHIPMENTS, shipment_id, organization_id, "Shipment")
     if shipment.get("status") not in ["planned", "pending"]:
         raise ValueError("Driver may only be changed before the trip begins")
     driver = _owned_record(DRIVERS, payload.get("driverId"), organization_id, "Driver")
     if driver.get("status") not in ["available", "assigned"]:
         raise ValueError("Selected driver is not available")
-    shipment["driverId"] = driver["driverId"]
-    shipment.setdefault("timeline", []).append({"timestamp": now_iso(), "label": f"Driver assigned: {driver['name']}"})
-    driver["status"] = "assigned"
+    previous_driver_id = shipment.get("driverId")
+    access_updated = False
+    if shipment.get("lotTripId"):
+        if v2_shipment_access_repository is None:
+            raise ValueError("V2 shipment access repository is unavailable")
+        v2_shipment_access_repository.transition_shipment_access_driver(
+            shipment["lotTripId"],
+            previous_driver_id,
+            driver["driverId"],
+        )
+        access_updated = previous_driver_id != driver["driverId"]
+    shipment_before = deepcopy(shipment)
+    driver_before = deepcopy(driver)
+    try:
+        shipment["driverId"] = driver["driverId"]
+        shipment.setdefault("timeline", []).append(
+            {"timestamp": now_iso(), "label": f"Driver assigned: {driver['name']}"}
+        )
+        driver["status"] = "assigned"
+    except Exception:
+        _restore_mapping(shipment, shipment_before)
+        _restore_mapping(driver, driver_before)
+        if access_updated:
+            v2_shipment_access_repository.transition_shipment_access_driver(
+                shipment["lotTripId"],
+                driver["driverId"],
+                previous_driver_id,
+            )
+        raise
     return organization_shipment_record(shipment)
 
 

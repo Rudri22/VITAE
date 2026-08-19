@@ -13,8 +13,14 @@ try:
         GARDASIL_9_STATE,
     )
     from .shipment_registration import V2ShipmentRegistrationService
-    from .state_repository import InMemoryTelemetryStateRepository
-    from .storage import DRIVERS, SENSORS, SHIPMENTS, create_organization_shipment
+    from .shipment_access import InMemoryIdentityAccessRepository
+    from .storage import (
+        DRIVERS,
+        SENSORS,
+        SHIPMENTS,
+        assign_organization_driver,
+        create_organization_shipment,
+    )
     from . import storage as storage_module
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
@@ -27,8 +33,14 @@ except ImportError:
         GARDASIL_9_STATE,
     )
     from shipment_registration import V2ShipmentRegistrationService
-    from state_repository import InMemoryTelemetryStateRepository
-    from storage import DRIVERS, SENSORS, SHIPMENTS, create_organization_shipment
+    from shipment_access import InMemoryIdentityAccessRepository
+    from storage import (
+        DRIVERS,
+        SENSORS,
+        SHIPMENTS,
+        assign_organization_driver,
+        create_organization_shipment,
+    )
     import storage as storage_module
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
@@ -38,7 +50,7 @@ class V2ShipmentRegistrationTests(unittest.TestCase):
         self.shipments = deepcopy(SHIPMENTS)
         self.drivers = deepcopy(DRIVERS)
         self.sensors = deepcopy(SENSORS)
-        self.repository = InMemoryTelemetryStateRepository()
+        self.repository = InMemoryIdentityAccessRepository()
         self.service = V2ShipmentRegistrationService(self.repository)
         self.user = {
             "organizationId": "hospital-a",
@@ -81,6 +93,10 @@ class V2ShipmentRegistrationTests(unittest.TestCase):
             SHIPMENTS[shipment["shipmentId"]]["v2DeviceAssignmentId"],
             assignments[0].assignment_id,
         )
+        access = self.repository.get_shipment_access(shipment["lotTripId"])
+        self.assertEqual(access.shipment_id, shipment["shipmentId"])
+        self.assertEqual(access.organization_id, self.user["organizationId"])
+        self.assertEqual(access.driver_id, shipment["driverId"])
 
     def test_created_identity_is_available_through_monitoring_readback(self):
         shipment, _ = create_organization_shipment(
@@ -259,6 +275,60 @@ class V2ShipmentRegistrationTests(unittest.TestCase):
             self.repository.get_device_assignments("sensor-cold-12"),
             (),
         )
+        self.assertIsNone(
+            self.repository.get_shipment_access("lot-trip-ship-write-failure")
+        )
+
+    def test_driver_reassignment_updates_authoritative_shipment_access(self):
+        shipment, _ = create_organization_shipment(
+            self.payload(shipment_id="ship-driver-transition"),
+            self.user,
+            self.service,
+        )
+        DRIVERS["driver-replacement"] = {
+            **deepcopy(DRIVERS["driver-aya"]),
+            "driverId": "driver-replacement",
+            "name": "Replacement Driver",
+            "status": "available",
+        }
+        updated = assign_organization_driver(
+            self.user["organizationId"],
+            shipment["shipmentId"],
+            {"driverId": "driver-replacement"},
+            self.repository,
+        )
+        access = self.repository.get_shipment_access(shipment["lotTripId"])
+        self.assertEqual(updated["driverId"], "driver-replacement")
+        self.assertEqual(access.driver_id, "driver-replacement")
+
+    def test_failed_driver_reassignment_compensates_access_and_legacy(self):
+        shipment, _ = create_organization_shipment(
+            self.payload(shipment_id="ship-driver-rollback"),
+            self.user,
+            self.service,
+        )
+        DRIVERS["driver-replacement"] = {
+            **deepcopy(DRIVERS["driver-aya"]),
+            "driverId": "driver-replacement",
+            "name": "Replacement Driver",
+            "status": "available",
+        }
+        with patch.object(
+            storage_module,
+            "now_iso",
+            side_effect=RuntimeError("simulated legacy driver write failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "simulated legacy"):
+                assign_organization_driver(
+                    self.user["organizationId"],
+                    shipment["shipmentId"],
+                    {"driverId": "driver-replacement"},
+                    self.repository,
+                )
+        stored = SHIPMENTS[shipment["shipmentId"]]
+        access = self.repository.get_shipment_access(shipment["lotTripId"])
+        self.assertEqual(stored["driverId"], "driver-aya")
+        self.assertEqual(access.driver_id, "driver-aya")
 
     def test_legacy_creation_does_not_register_v2_identity(self):
         payload = self.payload(shipment_id="ship-legacy-only")

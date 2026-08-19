@@ -12,7 +12,7 @@ try:
     )
     from .shipment_lifecycle import V2ShipmentLifecycleService
     from .shipment_registration import V2ShipmentRegistrationService
-    from .state_repository import InMemoryTelemetryStateRepository
+    from .shipment_access import InMemoryIdentityAccessRepository
     from .storage import (
         DRIVERS,
         SENSORS,
@@ -35,7 +35,7 @@ except ImportError:
     )
     from shipment_lifecycle import V2ShipmentLifecycleService
     from shipment_registration import V2ShipmentRegistrationService
-    from state_repository import InMemoryTelemetryStateRepository
+    from shipment_access import InMemoryIdentityAccessRepository
     from storage import (
         DRIVERS,
         SENSORS,
@@ -55,7 +55,7 @@ class V2ShipmentLifecycleTests(unittest.TestCase):
         self.shipments = deepcopy(SHIPMENTS)
         self.drivers = deepcopy(DRIVERS)
         self.sensors = deepcopy(SENSORS)
-        self.repository = InMemoryTelemetryStateRepository()
+        self.repository = InMemoryIdentityAccessRepository()
         self.registration = V2ShipmentRegistrationService(self.repository)
         self.lifecycle = V2ShipmentLifecycleService(self.repository)
         self.processor = TelemetryProcessor(self.repository, self.repository)

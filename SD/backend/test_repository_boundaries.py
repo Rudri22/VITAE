@@ -42,6 +42,7 @@ except ImportError:
 class RepositoryBoundaryTests(unittest.TestCase):
     def test_memory_adapters_explicitly_implement_protocols(self):
         state_repository = InMemoryTelemetryStateRepository()
+        combined_repository = shipment_access.InMemoryIdentityAccessRepository()
         self.assertIsInstance(state_repository, IdentityRepository)
         self.assertIsInstance(state_repository, TelemetryStateRepository)
         self.assertIsInstance(InMemoryAlertRepository(), AlertRepository)
@@ -49,6 +50,11 @@ class RepositoryBoundaryTests(unittest.TestCase):
             shipment_access.InMemoryShipmentAccessRepository(),
             shipment_access.ShipmentAccessRepository,
         )
+        self.assertIsInstance(
+            combined_repository,
+            shipment_access.IdentityAccessRepository,
+        )
+        self.assertIsInstance(combined_repository, TelemetryStateRepository)
 
     def test_services_depend_on_protocol_annotations(self):
         expected = {
@@ -65,7 +71,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
                 "alert_repository": AlertRepository,
             },
             shipment_registration.V2ShipmentRegistrationService: {
-                "identity_repository": IdentityRepository,
+                "identity_repository": shipment_access.IdentityAccessRepository,
             },
             shipment_lifecycle.V2ShipmentLifecycleService: {
                 "identity_repository": IdentityRepository,

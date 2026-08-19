@@ -3,10 +3,10 @@ from threading import RLock
 from typing import Dict, Optional, Protocol, Tuple, runtime_checkable
 
 try:
-    from .state_repository import IdentityRepository
+    from .state_repository import IdentityRepository, InMemoryTelemetryStateRepository
     from .trip_identity import DeviceAssignment, TripIdentity
 except ImportError:
-    from state_repository import IdentityRepository
+    from state_repository import IdentityRepository, InMemoryTelemetryStateRepository
     from trip_identity import DeviceAssignment, TripIdentity
 
 
@@ -173,6 +173,54 @@ class InMemoryShipmentAccessRepository(ShipmentAccessRepository):
             )
             self._by_lot_trip_id[lot_trip] = updated
             return updated
+
+
+class InMemoryIdentityAccessRepository(
+    InMemoryTelemetryStateRepository,
+    InMemoryShipmentAccessRepository,
+):
+    """Atomic in-memory identity, telemetry-state, and access composition."""
+
+    def __init__(self):
+        InMemoryTelemetryStateRepository.__init__(self)
+        InMemoryShipmentAccessRepository.__init__(self)
+
+    def register_trip_assignment_and_access(
+        self,
+        trip: TripIdentity,
+        assignment: DeviceAssignment,
+        access: ShipmentAccess,
+    ) -> None:
+        if access.lot_trip_id != trip.lot_trip_id:
+            raise ShipmentAccessConflictError(
+                "ShipmentAccess and TripIdentity lot_trip_id must match"
+            )
+        with self._lock:
+            self.register_trip_and_assignment(trip, assignment)
+            try:
+                self.register_shipment_access(access)
+            except Exception:
+                self.unregister_planned_trip_and_assignment(
+                    trip.trip_id,
+                    assignment.assignment_id,
+                )
+                raise
+
+    def unregister_planned_trip_assignment_and_access(
+        self,
+        trip_id: str,
+        assignment_id: str,
+        lot_trip_id: str,
+        shipment_id: str,
+    ) -> None:
+        with self._lock:
+            access = self.get_shipment_access(lot_trip_id)
+            if access is None or access.shipment_id != shipment_id:
+                raise ShipmentAccessNotFoundError(
+                    "Shipment access does not exist or identity does not match"
+                )
+            self.unregister_planned_trip_and_assignment(trip_id, assignment_id)
+            self.unregister_shipment_access(lot_trip_id, shipment_id)
 
 
 def validate_shipment_access(access: ShipmentAccess) -> ShipmentAccess:

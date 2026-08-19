@@ -132,11 +132,7 @@ try:
         AlertLifecycleAccessDeniedError,
         AlertLifecycleService,
     )
-    from .alerting import (
-        AlertNotFoundError,
-        AlertTransitionError,
-        InMemoryAlertRepository,
-    )
+    from .alerting import AlertNotFoundError, AlertTransitionError
     from .monitoring_service import LotTripNotFoundError, MonitoringService
     from .operational_service import OperationalTelemetryService
     from .product_catalog_service import ProductCatalogService
@@ -146,7 +142,12 @@ try:
         GARDASIL_9_SOURCE_VERSION,
         GARDASIL_9_STATE,
     )
-    from .state_repository import InMemoryTelemetryStateRepository
+    from .repository_config import (
+        RepositoryConfig,
+        compose_repositories,
+        shipment_access_resolver,
+    )
+    from .shipment_access import ShipmentAccess
     from .shipment_registration import V2ShipmentRegistrationService
     from .shipment_lifecycle import V2ShipmentLifecycleService
     from .telemetry_http import (
@@ -164,11 +165,7 @@ except ImportError:
         AlertLifecycleAccessDeniedError,
         AlertLifecycleService,
     )
-    from alerting import (
-        AlertNotFoundError,
-        AlertTransitionError,
-        InMemoryAlertRepository,
-    )
+    from alerting import AlertNotFoundError, AlertTransitionError
     from monitoring_service import LotTripNotFoundError, MonitoringService
     from operational_service import OperationalTelemetryService
     from product_catalog_service import ProductCatalogService
@@ -178,7 +175,12 @@ except ImportError:
         GARDASIL_9_SOURCE_VERSION,
         GARDASIL_9_STATE,
     )
-    from state_repository import InMemoryTelemetryStateRepository
+    from repository_config import (
+        RepositoryConfig,
+        compose_repositories,
+        shipment_access_resolver,
+    )
+    from shipment_access import ShipmentAccess
     from shipment_registration import V2ShipmentRegistrationService
     from shipment_lifecycle import V2ShipmentLifecycleService
     from telemetry_http import (
@@ -217,12 +219,27 @@ V2_PROTOTYPE_ASSIGNMENT = DeviceAssignment(
     assigned_at=V2_PROTOTYPE_TRIP.start_time,
     active=True,
 )
-V2_STATE_REPOSITORY = InMemoryTelemetryStateRepository()
-V2_STATE_REPOSITORY.register_trip(V2_PROTOTYPE_TRIP)
-V2_STATE_REPOSITORY.register_device_assignment(V2_PROTOTYPE_ASSIGNMENT)
-V2_ALERT_REPOSITORY = InMemoryAlertRepository()
+V2_REPOSITORY_CONFIG = RepositoryConfig.from_environment()
+V2_REPOSITORIES = compose_repositories(V2_REPOSITORY_CONFIG)
+V2_IDENTITY_REPOSITORY = V2_REPOSITORIES.identity_repository
+V2_SHIPMENT_ACCESS_REPOSITORY = V2_REPOSITORIES.shipment_access_repository
+V2_STATE_REPOSITORY = V2_REPOSITORIES.telemetry_state_repository
+V2_ALERT_REPOSITORY = V2_REPOSITORIES.alert_repository
+_prototype_access = get_v2_alert_shipment_access(V2_PROTOTYPE_TRIP.lot_trip_id)
+if _prototype_access is None:
+    raise RuntimeError("Prototype V2 shipment access is missing")
+V2_IDENTITY_REPOSITORY.register_trip_assignment_and_access(
+    V2_PROTOTYPE_TRIP,
+    V2_PROTOTYPE_ASSIGNMENT,
+    ShipmentAccess(
+        shipment_id=_prototype_access["shipmentId"],
+        lot_trip_id=_prototype_access["lotTripId"],
+        organization_id=_prototype_access["organizationId"],
+        driver_id=_prototype_access["driverId"],
+    ),
+)
 V2_TELEMETRY_PROCESSOR = TelemetryProcessor(
-    V2_STATE_REPOSITORY,
+    V2_IDENTITY_REPOSITORY,
     V2_STATE_REPOSITORY,
 )
 V2_OPERATIONAL_SERVICE = OperationalTelemetryService(
@@ -231,19 +248,19 @@ V2_OPERATIONAL_SERVICE = OperationalTelemetryService(
 )
 V2_TELEMETRY_HTTP_ADAPTER = TelemetryHttpAdapter(V2_OPERATIONAL_SERVICE)
 V2_MONITORING_SERVICE = MonitoringService(
-    V2_STATE_REPOSITORY,
+    V2_IDENTITY_REPOSITORY,
     V2_STATE_REPOSITORY,
     V2_ALERT_REPOSITORY,
 )
 V2_ALERT_LIFECYCLE_SERVICE = AlertLifecycleService(
     V2_ALERT_REPOSITORY,
-    get_v2_alert_shipment_access,
+    shipment_access_resolver(V2_SHIPMENT_ACCESS_REPOSITORY),
 )
 V2_SHIPMENT_REGISTRATION_SERVICE = V2ShipmentRegistrationService(
-    V2_STATE_REPOSITORY
+    V2_IDENTITY_REPOSITORY
 )
 V2_SHIPMENT_LIFECYCLE_SERVICE = V2ShipmentLifecycleService(
-    V2_STATE_REPOSITORY
+    V2_IDENTITY_REPOSITORY
 )
 V2_PRODUCT_CATALOG_SERVICE = ProductCatalogService()
 
@@ -387,7 +404,15 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/organization/shipments/") and path.endswith("/driver"):
             shipment_id = path.removeprefix("/api/organization/shipments/").removesuffix("/driver").strip("/")
-            self.handle_organization_operation(lambda org, payload, user: assign_organization_driver(org, shipment_id, payload), "shipment")
+            self.handle_organization_operation(
+                lambda org, payload, user: assign_organization_driver(
+                    org,
+                    shipment_id,
+                    payload,
+                    V2_SHIPMENT_ACCESS_REPOSITORY,
+                ),
+                "shipment",
+            )
             return
         if path.startswith("/api/organization/shipments/") and path.endswith("/verification"):
             shipment_id = path.removeprefix("/api/organization/shipments/").removesuffix("/verification").strip("/")

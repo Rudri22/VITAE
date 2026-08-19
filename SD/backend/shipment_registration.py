@@ -4,7 +4,10 @@ from typing import Any, Mapping
 
 try:
     from .product_rules import resolve_applicable_rules
-    from .state_repository import IdentityRepository
+    from .shipment_access import (
+        IdentityAccessRepository,
+        ShipmentAccess,
+    )
     from .trip_identity import (
         DeviceAssignment,
         TripIdentity,
@@ -13,7 +16,7 @@ try:
     )
 except ImportError:
     from product_rules import resolve_applicable_rules
-    from state_repository import IdentityRepository
+    from shipment_access import IdentityAccessRepository, ShipmentAccess
     from trip_identity import (
         DeviceAssignment,
         TripIdentity,
@@ -26,6 +29,7 @@ except ImportError:
 class V2ShipmentRegistration:
     trip_identity: TripIdentity
     device_assignment: DeviceAssignment
+    shipment_access: ShipmentAccess
 
 
 class V2ShipmentRegistrationError(ValueError):
@@ -33,7 +37,7 @@ class V2ShipmentRegistrationError(ValueError):
 
 
 class V2ShipmentRegistrationService:
-    def __init__(self, identity_repository: IdentityRepository):
+    def __init__(self, identity_repository: IdentityAccessRepository):
         self._identity_repository = identity_repository
 
     def register_for_shipment(
@@ -110,12 +114,23 @@ class V2ShipmentRegistrationService:
             assigned_at=_aware_datetime(shipment.get("lastUpdated"), "lastUpdated"),
             active=False,
         )
+        access = ShipmentAccess(
+            shipment_id=shipment_id,
+            lot_trip_id=trip.lot_trip_id,
+            organization_id=_required_shipment_value(shipment, "organizationId"),
+            driver_id=_required_shipment_value(shipment, "driverId"),
+        )
 
         validate_trip_rule_context(trip)
-        self._identity_repository.register_trip_and_assignment(trip, assignment)
+        self._identity_repository.register_trip_assignment_and_access(
+            trip,
+            assignment,
+            access,
+        )
         return V2ShipmentRegistration(
             trip_identity=trip,
             device_assignment=assignment,
+            shipment_access=access,
         )
 
     def rollback_registration(
@@ -123,9 +138,11 @@ class V2ShipmentRegistrationService:
         registration: V2ShipmentRegistration,
     ) -> None:
         """Remove an untouched PLANNED registration after legacy write failure."""
-        self._identity_repository.unregister_planned_trip_and_assignment(
+        self._identity_repository.unregister_planned_trip_assignment_and_access(
             registration.trip_identity.trip_id,
             registration.device_assignment.assignment_id,
+            registration.shipment_access.lot_trip_id,
+            registration.shipment_access.shipment_id,
         )
 
 

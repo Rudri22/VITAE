@@ -81,7 +81,13 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.assertEqual(trip.product_id, "gardasil-9")
         self.assertEqual(assignment.trip_id, trip.trip_id)
         self.assertEqual(assignment.lot_trip_id, trip.lot_trip_id)
-        self.assertIsNotNone(app.V2_STATE_REPOSITORY.get_trip_by_id(trip.trip_id))
+        self.assertIsNotNone(
+            app.V2_IDENTITY_REPOSITORY.get_trip_by_id(trip.trip_id)
+        )
+        self.assertIs(
+            app.V2_TELEMETRY_PROCESSOR._identity_repository,
+            app.V2_IDENTITY_REPOSITORY,
+        )
         self.assertIs(
             app.V2_TELEMETRY_PROCESSOR._state_repository,
             app.V2_STATE_REPOSITORY,
