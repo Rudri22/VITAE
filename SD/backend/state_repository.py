@@ -1,7 +1,7 @@
 from dataclasses import dataclass, replace
 from datetime import datetime
 from threading import RLock
-from typing import Dict, Optional, Protocol, Tuple
+from typing import Dict, Optional, Protocol, Tuple, runtime_checkable
 
 try:
     from .risk_rules import ApplicationStatus, PreviousState, StatusDecision
@@ -80,6 +80,7 @@ class StateIntegrityError(StateRepositoryError):
     pass
 
 
+@runtime_checkable
 class TelemetryStateRepository(Protocol):
     def get_live_state(self, lot_trip_id: str) -> Optional[LiveState]:
         ...
@@ -99,6 +100,7 @@ class TelemetryStateRepository(Protocol):
         ...
 
 
+@runtime_checkable
 class IdentityRepository(Protocol):
     def register_trip_and_assignment(
         self,
@@ -238,7 +240,7 @@ def live_state_from_decision(
     return state
 
 
-class InMemoryTelemetryStateRepository:
+class InMemoryTelemetryStateRepository(IdentityRepository, TelemetryStateRepository):
     """Reference adapter implementing the repository's atomicity contract."""
 
     def __init__(self):

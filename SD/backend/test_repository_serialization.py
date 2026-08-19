@@ -1,0 +1,212 @@
+import json
+import unittest
+from copy import deepcopy
+from dataclasses import replace
+from datetime import timedelta, timezone
+
+try:
+    from .alerting import InMemoryAlertRepository
+    from .repository_contract_suite import (
+        CONTRACT_TIME,
+        contract_alert,
+        contract_assignment,
+        contract_sample,
+        contract_state,
+        contract_trip,
+    )
+    from .repository_serialization import (
+        RepositorySerializationError,
+        deserialize_alert,
+        deserialize_alert_action,
+        deserialize_device_assignment,
+        deserialize_live_state,
+        deserialize_telemetry_record,
+        deserialize_trip_identity,
+        serialize_alert,
+        serialize_alert_action,
+        serialize_device_assignment,
+        serialize_live_state,
+        serialize_telemetry_record,
+        serialize_trip_identity,
+    )
+    from .state_repository import telemetry_record_from_sample
+except ImportError:
+    from alerting import InMemoryAlertRepository
+    from repository_contract_suite import (
+        CONTRACT_TIME,
+        contract_alert,
+        contract_assignment,
+        contract_sample,
+        contract_state,
+        contract_trip,
+    )
+    from repository_serialization import (
+        RepositorySerializationError,
+        deserialize_alert,
+        deserialize_alert_action,
+        deserialize_device_assignment,
+        deserialize_live_state,
+        deserialize_telemetry_record,
+        deserialize_trip_identity,
+        serialize_alert,
+        serialize_alert_action,
+        serialize_device_assignment,
+        serialize_live_state,
+        serialize_telemetry_record,
+        serialize_trip_identity,
+    )
+    from state_repository import telemetry_record_from_sample
+
+
+class RepositorySerializationTests(unittest.TestCase):
+    def setUp(self):
+        self.trip = contract_trip()
+        self.assignment = contract_assignment()
+        self.sample = contract_sample()
+        self.record = telemetry_record_from_sample(
+            self.trip.trip_id,
+            self.trip.lot_trip_id,
+            self.sample,
+        )
+        self.state = contract_state(self.sample)
+
+    def test_trip_identity_round_trip(self):
+        self.assertEqual(
+            deserialize_trip_identity(serialize_trip_identity(self.trip)),
+            self.trip,
+        )
+
+    def test_device_assignment_round_trip(self):
+        self.assertEqual(
+            deserialize_device_assignment(
+                serialize_device_assignment(self.assignment)
+            ),
+            self.assignment,
+        )
+
+    def test_telemetry_record_round_trip(self):
+        self.assertEqual(
+            deserialize_telemetry_record(serialize_telemetry_record(self.record)),
+            self.record,
+        )
+
+    def test_live_state_round_trip(self):
+        excursion_state = replace(
+            self.state,
+            active_rule_id="excursion-rule",
+            excursion_started_at=CONTRACT_TIME,
+            excursion_episode_duration_minutes=12.5,
+            cumulative_excursion_duration_minutes=22.5,
+            excursion_utilization=0.25,
+        )
+        self.assertEqual(
+            deserialize_live_state(serialize_live_state(excursion_state)),
+            excursion_state,
+        )
+
+    def test_alert_action_round_trip(self):
+        repository = InMemoryAlertRepository()
+        alert = repository.save_alert(contract_alert())
+        updated = repository.record_action(
+            alert.alert_id,
+            description="Inspected cooling unit",
+            actor_id="contract-driver",
+            recorded_at=CONTRACT_TIME + timedelta(minutes=1),
+        )
+        action = updated.actions[0]
+        self.assertEqual(
+            deserialize_alert_action(serialize_alert_action(action)), action
+        )
+
+    def test_full_alert_lifecycle_round_trip(self):
+        repository = InMemoryAlertRepository()
+        alert = repository.save_alert(contract_alert())
+        alert = repository.acknowledge_alert(
+            alert.alert_id,
+            actor_id="contract-driver",
+            acknowledged_at=CONTRACT_TIME + timedelta(minutes=1),
+        )
+        alert = repository.record_action(
+            alert.alert_id,
+            description="Inspected cooling unit",
+            actor_id="contract-driver",
+            recorded_at=CONTRACT_TIME + timedelta(minutes=2),
+        )
+        alert = repository.resolve_alert(
+            alert.alert_id,
+            actor_id="contract-organization",
+            resolved_at=CONTRACT_TIME + timedelta(minutes=3),
+            resolution_note="Disposition recorded",
+        )
+        self.assertEqual(deserialize_alert(serialize_alert(alert)), alert)
+
+    def test_every_schema_is_json_serializable_and_versioned(self):
+        documents = (
+            serialize_trip_identity(self.trip),
+            serialize_device_assignment(self.assignment),
+            serialize_telemetry_record(self.record),
+            serialize_live_state(self.state),
+            serialize_alert(contract_alert()),
+        )
+        for document in documents:
+            with self.subTest(schema=document["schema"]):
+                self.assertEqual(document["schema_version"], 1)
+                self.assertIsInstance(json.dumps(document), str)
+
+    def test_timestamps_are_canonical_utc(self):
+        offset_trip = replace(
+            self.trip,
+            start_time=CONTRACT_TIME.astimezone(timezone(timedelta(hours=3))),
+        )
+        document = serialize_trip_identity(offset_trip)
+        self.assertTrue(document["start_time"].endswith("Z"))
+        self.assertEqual(
+            deserialize_trip_identity(document).start_time,
+            self.trip.start_time,
+        )
+
+    def test_unknown_schema_version_is_rejected(self):
+        for version in (2, True, "1"):
+            document = serialize_trip_identity(self.trip)
+            document["schema_version"] = version
+            with self.subTest(version=version):
+                with self.assertRaises(RepositorySerializationError):
+                    deserialize_trip_identity(document)
+
+    def test_missing_or_unexpected_fields_are_rejected(self):
+        missing = serialize_live_state(self.state)
+        missing.pop("revision")
+        unexpected = serialize_live_state(self.state)
+        unexpected["new_field"] = "not-versioned"
+        for document in (missing, unexpected):
+            with self.subTest(keys=tuple(document)):
+                with self.assertRaises(RepositorySerializationError):
+                    deserialize_live_state(document)
+
+    def test_invalid_enum_and_timestamp_are_rejected(self):
+        invalid_status = serialize_trip_identity(self.trip)
+        invalid_status["status"] = "NOT_A_STATUS"
+        naive_time = serialize_trip_identity(self.trip)
+        naive_time["start_time"] = "2026-08-19T12:00:00"
+        for document in (invalid_status, naive_time):
+            with self.assertRaises(RepositorySerializationError):
+                deserialize_trip_identity(deepcopy(document))
+
+    def test_optional_values_round_trip_as_null(self):
+        document = serialize_telemetry_record(
+            replace(
+                self.record,
+                battery_level=None,
+                latitude=None,
+                longitude=None,
+                device_health=None,
+            )
+        )
+        self.assertIsNone(document["battery_level"])
+        self.assertIsNone(
+            deserialize_telemetry_record(document).battery_level
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

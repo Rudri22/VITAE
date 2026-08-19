@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 from hashlib import sha256
 from threading import RLock
-from typing import Dict, Optional, Protocol, Tuple
+from typing import Dict, Optional, Protocol, Tuple, runtime_checkable
 
 try:
     from .risk_rules import ApplicationStatus
@@ -160,6 +160,7 @@ def evaluate_alert_policy(
     )
 
 
+@runtime_checkable
 class AlertRepository(Protocol):
     def save_alert(self, alert: Alert) -> Alert:
         ...
@@ -205,7 +206,7 @@ class AlertRepository(Protocol):
         ...
 
 
-class InMemoryAlertRepository:
+class InMemoryAlertRepository(AlertRepository):
     def __init__(self):
         self._alerts: Dict[str, Alert] = {}
         self._lock = RLock()
