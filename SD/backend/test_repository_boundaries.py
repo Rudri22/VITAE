@@ -8,6 +8,8 @@ try:
         operational_service,
         repository_contract_suite,
         repository_serialization,
+        shipment_access,
+        sqlite_identity_repository,
         shipment_lifecycle,
         shipment_registration,
         telemetry_processor,
@@ -24,6 +26,8 @@ except ImportError:
     import operational_service
     import repository_contract_suite
     import repository_serialization
+    import shipment_access
+    import sqlite_identity_repository
     import shipment_lifecycle
     import shipment_registration
     import telemetry_processor
@@ -41,6 +45,10 @@ class RepositoryBoundaryTests(unittest.TestCase):
         self.assertIsInstance(state_repository, IdentityRepository)
         self.assertIsInstance(state_repository, TelemetryStateRepository)
         self.assertIsInstance(InMemoryAlertRepository(), AlertRepository)
+        self.assertIsInstance(
+            shipment_access.InMemoryShipmentAccessRepository(),
+            shipment_access.ShipmentAccessRepository,
+        )
 
     def test_services_depend_on_protocol_annotations(self):
         expected = {
@@ -74,7 +82,12 @@ class RepositoryBoundaryTests(unittest.TestCase):
 
     def test_new_contract_and_serialization_modules_have_no_aws_dependency(self):
         forbidden = ("boto3", "botocore", "dynamodb", "aws_sdk")
-        for module in (repository_contract_suite, repository_serialization):
+        for module in (
+            repository_contract_suite,
+            repository_serialization,
+            shipment_access,
+            sqlite_identity_repository,
+        ):
             source = inspect.getsource(module).lower()
             with self.subTest(module=module.__name__):
                 self.assertFalse(any(name in source for name in forbidden))

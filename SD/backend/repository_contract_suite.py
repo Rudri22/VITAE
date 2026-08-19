@@ -24,6 +24,12 @@ try:
         telemetry_record_from_sample,
     )
     from .telemetry import ValidatedTelemetrySample
+    from .shipment_access import (
+        ShipmentAccess,
+        ShipmentAccessConflictError,
+        ShipmentAccessNotFoundError,
+        ShipmentAccessRepository,
+    )
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
     from alerting import (
@@ -46,6 +52,12 @@ except ImportError:
         telemetry_record_from_sample,
     )
     from telemetry import ValidatedTelemetrySample
+    from shipment_access import (
+        ShipmentAccess,
+        ShipmentAccessConflictError,
+        ShipmentAccessNotFoundError,
+        ShipmentAccessRepository,
+    )
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
 
@@ -78,6 +90,16 @@ def contract_assignment(**changes):
         lot_trip_id="contract-lot-trip",
         assigned_at=CONTRACT_TIME,
         active=False,
+    )
+    return replace(value, **changes)
+
+
+def contract_shipment_access(**changes):
+    value = ShipmentAccess(
+        shipment_id="contract-shipment",
+        lot_trip_id="contract-lot-trip",
+        organization_id="contract-organization",
+        driver_id="contract-driver",
     )
     return replace(value, **changes)
 
@@ -244,6 +266,122 @@ class IdentityRepositoryContractMixin:
         self.assertIsNone(self.repository.get_trip_by_id(trip.trip_id))
         self.assertEqual(
             self.repository.get_device_assignments(assignment.device_id), ()
+        )
+
+
+class ShipmentAccessRepositoryContractMixin:
+    """Reusable behavior suite for every ShipmentAccessRepository adapter."""
+
+    def make_shipment_access_repository(self):
+        raise NotImplementedError
+
+    def setUp(self):
+        super().setUp()
+        self.repository = self.make_shipment_access_repository()
+        self.access = contract_shipment_access()
+
+    def test_contract_runtime_protocol(self):
+        self.assertIsInstance(self.repository, ShipmentAccessRepository)
+
+    def test_contract_register_get_and_list(self):
+        self.assertEqual(
+            self.repository.register_shipment_access(self.access), self.access
+        )
+        self.assertEqual(
+            self.repository.get_shipment_access(self.access.lot_trip_id),
+            self.access,
+        )
+        self.assertEqual(
+            self.repository.list_shipment_accesses(), (self.access,)
+        )
+
+    def test_contract_identical_registration_is_idempotent(self):
+        self.repository.register_shipment_access(self.access)
+        self.assertEqual(
+            self.repository.register_shipment_access(self.access), self.access
+        )
+        self.assertEqual(
+            self.repository.list_shipment_accesses(), (self.access,)
+        )
+
+    def test_contract_lot_trip_conflict_preserves_original(self):
+        self.repository.register_shipment_access(self.access)
+        with self.assertRaises(ShipmentAccessConflictError):
+            self.repository.register_shipment_access(
+                replace(self.access, shipment_id="different-shipment")
+            )
+        self.assertEqual(
+            self.repository.get_shipment_access(self.access.lot_trip_id),
+            self.access,
+        )
+
+    def test_contract_shipment_id_is_unique(self):
+        self.repository.register_shipment_access(self.access)
+        with self.assertRaises(ShipmentAccessConflictError):
+            self.repository.register_shipment_access(
+                replace(self.access, lot_trip_id="different-lot-trip")
+            )
+        self.assertIsNone(
+            self.repository.get_shipment_access("different-lot-trip")
+        )
+
+    def test_contract_filters_organization_and_driver(self):
+        second = replace(
+            self.access,
+            shipment_id="second-shipment",
+            lot_trip_id="second-lot-trip",
+            organization_id="second-organization",
+            driver_id="second-driver",
+        )
+        self.repository.register_shipment_access(self.access)
+        self.repository.register_shipment_access(second)
+        self.assertEqual(
+            self.repository.list_shipment_accesses(
+                organization_id=self.access.organization_id
+            ),
+            (self.access,),
+        )
+        self.assertEqual(
+            self.repository.list_shipment_accesses(driver_id=second.driver_id),
+            (second,),
+        )
+
+    def test_contract_unregister_requires_both_identities(self):
+        self.repository.register_shipment_access(self.access)
+        with self.assertRaises(ShipmentAccessNotFoundError):
+            self.repository.unregister_shipment_access(
+                self.access.lot_trip_id,
+                "wrong-shipment",
+            )
+        self.assertEqual(
+            self.repository.get_shipment_access(self.access.lot_trip_id),
+            self.access,
+        )
+        self.repository.unregister_shipment_access(
+            self.access.lot_trip_id,
+            self.access.shipment_id,
+        )
+        self.assertIsNone(
+            self.repository.get_shipment_access(self.access.lot_trip_id)
+        )
+
+    def test_contract_driver_transition_is_conditional(self):
+        self.repository.register_shipment_access(self.access)
+        updated = self.repository.transition_shipment_access_driver(
+            self.access.lot_trip_id,
+            self.access.driver_id,
+            "replacement-driver",
+        )
+        self.assertEqual(updated.driver_id, "replacement-driver")
+        with self.assertRaises(ShipmentAccessConflictError):
+            self.repository.transition_shipment_access_driver(
+                self.access.lot_trip_id,
+                self.access.driver_id,
+                "stale-replacement",
+            )
+        self.assertEqual(
+            self.repository.get_shipment_access(self.access.lot_trip_id),
+            updated,
         )
 
 

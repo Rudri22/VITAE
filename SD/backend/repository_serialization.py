@@ -7,11 +7,13 @@ try:
     from .alerting import Alert, AlertAction, AlertSeverity, AlertStatus, AlertType
     from .risk_rules import ApplicationStatus
     from .state_repository import LiveState, TelemetryRecord
+    from .shipment_access import ShipmentAccess
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
     from alerting import Alert, AlertAction, AlertSeverity, AlertStatus, AlertType
     from risk_rules import ApplicationStatus
     from state_repository import LiveState, TelemetryRecord
+    from shipment_access import ShipmentAccess
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
 
@@ -83,6 +85,28 @@ def deserialize_device_assignment(payload: Mapping[str, Any]) -> DeviceAssignmen
         lot_trip_id=_text(fields, "lot_trip_id"),
         assigned_at=_deserialize_datetime(fields["assigned_at"], "assigned_at"),
         active=_boolean(fields["active"], "active"),
+    )
+
+
+def serialize_shipment_access(value: ShipmentAccess) -> dict[str, Any]:
+    return _document(
+        "vitae.shipment_access",
+        {
+            "shipment_id": value.shipment_id,
+            "lot_trip_id": value.lot_trip_id,
+            "organization_id": value.organization_id,
+            "driver_id": value.driver_id,
+        },
+    )
+
+
+def deserialize_shipment_access(payload: Mapping[str, Any]) -> ShipmentAccess:
+    fields = _fields(payload, "vitae.shipment_access", _SHIPMENT_ACCESS_FIELDS)
+    return ShipmentAccess(
+        shipment_id=_text(fields, "shipment_id"),
+        lot_trip_id=_text(fields, "lot_trip_id"),
+        organization_id=_text(fields, "organization_id"),
+        driver_id=_text(fields, "driver_id"),
     )
 
 
@@ -251,6 +275,7 @@ def deserialize_alert(payload: Mapping[str, Any]) -> Alert:
 
 _TRIP_FIELDS = frozenset(("trip_id", "lot_trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "origin", "destination", "start_time", "status"))
 _ASSIGNMENT_FIELDS = frozenset(("assignment_id", "device_id", "trip_id", "lot_trip_id", "assigned_at", "active"))
+_SHIPMENT_ACCESS_FIELDS = frozenset(("shipment_id", "lot_trip_id", "organization_id", "driver_id"))
 _TELEMETRY_FIELDS = frozenset(("trip_id", "lot_trip_id", "sample_id", "device_id", "timestamp", "temperature", "battery_level", "latitude", "longitude", "device_health"))
 _LIVE_STATE_FIELDS = frozenset(("lot_trip_id", "trip_id", "device_id", "product_id", "product_rule_version", "status", "reason_code", "active_rule_id", "last_sample_id", "last_sample_timestamp", "latest_temperature", "last_updated", "excursion_started_at", "excursion_episode_duration_minutes", "cumulative_excursion_duration_minutes", "excursion_utilization", "revision"))
 _ALERT_ACTION_FIELDS = frozenset(("action_id", "description", "actor_id", "recorded_at"))

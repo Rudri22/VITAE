@@ -5,16 +5,20 @@ try:
     from .repository_contract_suite import (
         AlertRepositoryContractMixin,
         IdentityRepositoryContractMixin,
+        ShipmentAccessRepositoryContractMixin,
         TelemetryStateRepositoryContractMixin,
     )
+    from .shipment_access import InMemoryShipmentAccessRepository
     from .state_repository import InMemoryTelemetryStateRepository
 except ImportError:
     from alerting import InMemoryAlertRepository
     from repository_contract_suite import (
         AlertRepositoryContractMixin,
         IdentityRepositoryContractMixin,
+        ShipmentAccessRepositoryContractMixin,
         TelemetryStateRepositoryContractMixin,
     )
+    from shipment_access import InMemoryShipmentAccessRepository
     from state_repository import InMemoryTelemetryStateRepository
 
 
@@ -32,6 +36,14 @@ class InMemoryTelemetryStateRepositoryContractTests(
 ):
     def make_telemetry_state_repository(self):
         return InMemoryTelemetryStateRepository()
+
+
+class InMemoryShipmentAccessRepositoryContractTests(
+    ShipmentAccessRepositoryContractMixin,
+    unittest.TestCase,
+):
+    def make_shipment_access_repository(self):
+        return InMemoryShipmentAccessRepository()
 
 
 class InMemoryAlertRepositoryContractTests(

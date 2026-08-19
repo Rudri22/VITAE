@@ -11,6 +11,7 @@ try:
         contract_alert,
         contract_assignment,
         contract_sample,
+        contract_shipment_access,
         contract_state,
         contract_trip,
     )
@@ -20,12 +21,14 @@ try:
         deserialize_alert_action,
         deserialize_device_assignment,
         deserialize_live_state,
+        deserialize_shipment_access,
         deserialize_telemetry_record,
         deserialize_trip_identity,
         serialize_alert,
         serialize_alert_action,
         serialize_device_assignment,
         serialize_live_state,
+        serialize_shipment_access,
         serialize_telemetry_record,
         serialize_trip_identity,
     )
@@ -37,6 +40,7 @@ except ImportError:
         contract_alert,
         contract_assignment,
         contract_sample,
+        contract_shipment_access,
         contract_state,
         contract_trip,
     )
@@ -46,12 +50,14 @@ except ImportError:
         deserialize_alert_action,
         deserialize_device_assignment,
         deserialize_live_state,
+        deserialize_shipment_access,
         deserialize_telemetry_record,
         deserialize_trip_identity,
         serialize_alert,
         serialize_alert_action,
         serialize_device_assignment,
         serialize_live_state,
+        serialize_shipment_access,
         serialize_telemetry_record,
         serialize_trip_identity,
     )
@@ -88,6 +94,13 @@ class RepositorySerializationTests(unittest.TestCase):
         self.assertEqual(
             deserialize_telemetry_record(serialize_telemetry_record(self.record)),
             self.record,
+        )
+
+    def test_shipment_access_round_trip(self):
+        access = contract_shipment_access()
+        self.assertEqual(
+            deserialize_shipment_access(serialize_shipment_access(access)),
+            access,
         )
 
     def test_live_state_round_trip(self):
@@ -144,6 +157,7 @@ class RepositorySerializationTests(unittest.TestCase):
         documents = (
             serialize_trip_identity(self.trip),
             serialize_device_assignment(self.assignment),
+            serialize_shipment_access(contract_shipment_access()),
             serialize_telemetry_record(self.record),
             serialize_live_state(self.state),
             serialize_alert(contract_alert()),
