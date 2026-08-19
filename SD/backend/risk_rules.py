@@ -41,6 +41,9 @@ class ProductRule:
     verified: bool = False
     version: Optional[str] = None
     source: Optional[str] = None
+    presentation: Optional[str] = None
+    state: Optional[str] = None
+    source_url: Optional[str] = None
 
 
 @dataclass(frozen=True)
