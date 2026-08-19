@@ -9,6 +9,7 @@ try:
     from .trip_identity import (
         DeviceAssignment,
         TripIdentity,
+        TripStatus,
         validate_device_assignment,
         validate_trip_identity,
     )
@@ -18,6 +19,7 @@ except ImportError:
     from trip_identity import (
         DeviceAssignment,
         TripIdentity,
+        TripStatus,
         validate_device_assignment,
         validate_trip_identity,
     )
@@ -98,6 +100,20 @@ class TelemetryStateRepository(Protocol):
 
 
 class IdentityRepository(Protocol):
+    def register_trip_and_assignment(
+        self,
+        trip: TripIdentity,
+        assignment: DeviceAssignment,
+    ) -> None:
+        ...
+
+    def unregister_planned_trip_and_assignment(
+        self,
+        trip_id: str,
+        assignment_id: str,
+    ) -> None:
+        ...
+
     def register_trip(self, trip: TripIdentity) -> None:
         ...
 
@@ -238,6 +254,105 @@ class InMemoryTelemetryStateRepository:
                 raise StateIntegrityError("Trip identity is immutable once registered")
             self._trips_by_id[trip.trip_id] = trip
             self._trips_by_lot_trip_id[trip.lot_trip_id] = trip
+
+    def register_trip_and_assignment(
+        self,
+        trip: TripIdentity,
+        assignment: DeviceAssignment,
+    ) -> None:
+        """Atomically register one immutable trip and its device assignment."""
+        validate_trip_identity(trip)
+        validate_device_assignment(assignment, trip, assignment.device_id)
+        with self._lock:
+            existing_by_id = self._trips_by_id.get(trip.trip_id)
+            existing_by_lot = self._trips_by_lot_trip_id.get(trip.lot_trip_id)
+            existing_assignment = self._assignments_by_id.get(
+                assignment.assignment_id
+            )
+            if (
+                existing_by_id is not None
+                and existing_by_id != trip
+                or existing_by_lot is not None
+                and existing_by_lot != trip
+            ):
+                raise StateIntegrityError("Trip identity is already registered")
+            if existing_assignment is not None and existing_assignment != assignment:
+                raise StateIntegrityError(
+                    "DeviceAssignment is already registered with different content"
+                )
+            device_assignments = self._assignments_by_device.get(
+                assignment.device_id,
+                (),
+            )
+            if any(
+                (
+                    existing.active
+                    or (
+                        self._trips_by_id.get(existing.trip_id) is not None
+                        and self._trips_by_id[existing.trip_id].status
+                        == TripStatus.PLANNED
+                    )
+                )
+                and existing.assignment_id != assignment.assignment_id
+                for existing in device_assignments
+            ):
+                raise StateIntegrityError(
+                    "Device already has an active assignment or PLANNED reservation"
+                )
+
+            self._trips_by_id[trip.trip_id] = trip
+            self._trips_by_lot_trip_id[trip.lot_trip_id] = trip
+            if existing_assignment is None:
+                self._assignments_by_id[assignment.assignment_id] = assignment
+                self._assignments_by_device.setdefault(
+                    assignment.device_id,
+                    [],
+                ).append(assignment)
+
+    def unregister_planned_trip_and_assignment(
+        self,
+        trip_id: str,
+        assignment_id: str,
+    ) -> None:
+        """Compensate an untouched PLANNED registration after legacy failure."""
+        with self._lock:
+            trip = self._trips_by_id.get(trip_id)
+            assignment = self._assignments_by_id.get(assignment_id)
+            if trip is None or assignment is None:
+                raise StateIntegrityError(
+                    "Planned registration compensation target does not exist"
+                )
+            if (
+                trip.status != TripStatus.PLANNED
+                or assignment.active
+                or assignment.trip_id != trip.trip_id
+                or assignment.lot_trip_id != trip.lot_trip_id
+            ):
+                raise StateIntegrityError(
+                    "Only an inactive untouched PLANNED registration can be removed"
+                )
+            if (
+                trip.lot_trip_id in self._live_states
+                or self._history.get(trip.lot_trip_id)
+            ):
+                raise StateIntegrityError(
+                    "Registration with telemetry state cannot be removed"
+                )
+
+            del self._assignments_by_id[assignment.assignment_id]
+            device_assignments = self._assignments_by_device.get(
+                assignment.device_id,
+                [],
+            )
+            self._assignments_by_device[assignment.device_id] = [
+                existing
+                for existing in device_assignments
+                if existing.assignment_id != assignment.assignment_id
+            ]
+            if not self._assignments_by_device[assignment.device_id]:
+                del self._assignments_by_device[assignment.device_id]
+            del self._trips_by_id[trip.trip_id]
+            del self._trips_by_lot_trip_id[trip.lot_trip_id]
 
     def get_trip_by_id(self, trip_id: str) -> Optional[TripIdentity]:
         with self._lock:

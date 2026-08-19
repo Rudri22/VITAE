@@ -1682,6 +1682,9 @@ def shipment_monitor_record(shipment):
         "id": shipment.get("id") or shipment.get("shipmentId"),
         "shipmentId": shipment.get("shipmentId"),
         "lotTripId": shipment.get("lotTripId"),
+        "tripId": shipment.get("tripId"),
+        "productRuleVersion": shipment.get("productRuleVersion"),
+        "tripStatus": shipment.get("tripStatus"),
         "origin": shipment.get("origin") or "Origin not assigned",
         "originGps": origin_gps,
         "destinationHospitalId": destination_id,
@@ -2464,7 +2467,7 @@ def get_organization_ticket(organization_id, ticket_id):
     return organization_ticket_record(_owned_record(SUPPORT_TICKETS, ticket_id, organization_id, "Ticket"))
 
 
-def create_organization_shipment(payload, user):
+def create_organization_shipment(payload, user, v2_registration_service=None):
     organization_id = user["organizationId"]
     required = ["submissionId", "productCategory", "quantity", "originFacilityId", "destinationFacilityId"]
     _required(payload, required)
@@ -2524,10 +2527,55 @@ def create_organization_shipment(payload, user):
         "routeProgress": 0, "currentLocation": origin["name"], "lastUpdated": timestamp, "alerts": [], "readings": [initial_reading],
         "timeline": [{"timestamp": timestamp, "label": f"Delivery request sent to {driver['name']}"}],
     }
+    registration = None
+    v2_request = payload.get("v2Monitoring")
+    if v2_request not in [None, False]:
+        if not isinstance(v2_request, dict):
+            raise ValueError("v2Monitoring must be an object or false")
+        if v2_request.get("enabled") is not False:
+            if v2_registration_service is None:
+                raise ValueError("V2 shipment registration is unavailable")
+            registration = v2_registration_service.register_for_shipment(
+                v2_request,
+                shipment,
+            )
+            shipment.update(
+                {
+                    "lotTripId": registration.trip_identity.lot_trip_id,
+                    "tripId": registration.trip_identity.trip_id,
+                    "productRuleVersion": (
+                        registration.trip_identity.product_rule_version
+                    ),
+                    "tripStatus": registration.trip_identity.status.value,
+                    "v2DeviceAssignmentId": (
+                        registration.device_assignment.assignment_id
+                    ),
+                }
+            )
+    driver_status = driver.get("status")
+    sensor_had_shipment = "shipmentId" in sensor
+    sensor_shipment_id = sensor.get("shipmentId")
+    try:
+        _commit_organization_shipment(shipment, driver, sensor)
+    except Exception:
+        SHIPMENTS.pop(shipment_id, None)
+        driver["status"] = driver_status
+        if sensor_had_shipment:
+            sensor["shipmentId"] = sensor_shipment_id
+        else:
+            sensor.pop("shipmentId", None)
+        if registration is not None:
+            v2_registration_service.rollback_registration(registration)
+        raise
+    return organization_shipment_record(shipment), True
+
+
+def _commit_organization_shipment(shipment, driver, sensor):
+    """Apply the legacy in-memory writes as one compensatable unit."""
+    shipment_id = shipment["shipmentId"]
     SHIPMENTS[shipment_id] = shipment
     driver["status"] = "assigned"
     sensor["shipmentId"] = shipment_id
-    return organization_shipment_record(shipment), True
 
 
 def assign_organization_driver(organization_id, shipment_id, payload):

@@ -134,6 +134,7 @@ try:
         GARDASIL_9_STATE,
     )
     from .state_repository import InMemoryTelemetryStateRepository
+    from .shipment_registration import V2ShipmentRegistrationService
     from .telemetry_http import (
         TelemetryHttpAdapter,
         serialize_alert,
@@ -153,6 +154,7 @@ except ImportError:
         GARDASIL_9_STATE,
     )
     from state_repository import InMemoryTelemetryStateRepository
+    from shipment_registration import V2ShipmentRegistrationService
     from telemetry_http import (
         TelemetryHttpAdapter,
         serialize_alert,
@@ -206,6 +208,9 @@ V2_MONITORING_SERVICE = MonitoringService(
     V2_STATE_REPOSITORY,
     V2_STATE_REPOSITORY,
     V2_ALERT_REPOSITORY,
+)
+V2_SHIPMENT_REGISTRATION_SERVICE = V2ShipmentRegistrationService(
+    V2_STATE_REPOSITORY
 )
 
 
@@ -641,7 +646,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         if not user:
             return
         try:
-            shipment, created = create_organization_shipment(self.read_json_body(), user)
+            shipment, created = create_organization_shipment(
+                self.read_json_body(),
+                user,
+                V2_SHIPMENT_REGISTRATION_SERVICE,
+            )
             self.send_json({"shipment": shipment, "created": created}, status=201 if created else 200)
         except ValueError as error:
             self.send_json({"error": str(error)}, status=400)
