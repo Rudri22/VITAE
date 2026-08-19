@@ -125,6 +125,7 @@ except ImportError:
 
 try:
     from .alerting import InMemoryAlertRepository
+    from .monitoring_service import LotTripNotFoundError, MonitoringService
     from .operational_service import OperationalTelemetryService
     from .product_rules import (
         GARDASIL_9_PRESENTATION,
@@ -133,11 +134,17 @@ try:
         GARDASIL_9_STATE,
     )
     from .state_repository import InMemoryTelemetryStateRepository
-    from .telemetry_http import TelemetryHttpAdapter
+    from .telemetry_http import (
+        TelemetryHttpAdapter,
+        serialize_alert,
+        serialize_live_state,
+        serialize_trip_identity,
+    )
     from .telemetry_processor import TelemetryProcessor
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
     from alerting import InMemoryAlertRepository
+    from monitoring_service import LotTripNotFoundError, MonitoringService
     from operational_service import OperationalTelemetryService
     from product_rules import (
         GARDASIL_9_PRESENTATION,
@@ -146,7 +153,12 @@ except ImportError:
         GARDASIL_9_STATE,
     )
     from state_repository import InMemoryTelemetryStateRepository
-    from telemetry_http import TelemetryHttpAdapter
+    from telemetry_http import (
+        TelemetryHttpAdapter,
+        serialize_alert,
+        serialize_live_state,
+        serialize_trip_identity,
+    )
     from telemetry_processor import TelemetryProcessor
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
@@ -190,6 +202,11 @@ V2_OPERATIONAL_SERVICE = OperationalTelemetryService(
     V2_ALERT_REPOSITORY,
 )
 V2_TELEMETRY_HTTP_ADAPTER = TelemetryHttpAdapter(V2_OPERATIONAL_SERVICE)
+V2_MONITORING_SERVICE = MonitoringService(
+    V2_STATE_REPOSITORY,
+    V2_STATE_REPOSITORY,
+    V2_ALERT_REPOSITORY,
+)
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -346,6 +363,16 @@ class ApiHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
 
+        if path.startswith("/api/v2/monitor/live/"):
+            lot_trip_id = path.removeprefix("/api/v2/monitor/live/")
+            self.handle_v2_monitor_live(lot_trip_id)
+            return
+
+        if path.startswith("/api/v2/monitor/alerts/"):
+            lot_trip_id = path.removeprefix("/api/v2/monitor/alerts/")
+            self.handle_v2_monitor_alerts(lot_trip_id)
+            return
+
         if path == "/api/me":
             user = self.require_authenticated_user()
             if not user:
@@ -493,6 +520,50 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         self.serve_frontend_file(path)
         return
+
+    def handle_v2_monitor_live(self, lot_trip_id):
+        try:
+            snapshot = V2_MONITORING_SERVICE.get_live_snapshot(lot_trip_id)
+        except (LotTripNotFoundError, ValueError):
+            self.send_v2_lot_trip_not_found(lot_trip_id)
+            return
+        self.send_json(
+            {
+                "success": True,
+                "tripIdentity": serialize_trip_identity(snapshot.trip_identity),
+                "liveState": serialize_live_state(snapshot.live_state),
+                "openAlertCount": snapshot.open_alert_count,
+                "latestAlert": serialize_alert(snapshot.latest_alert),
+            }
+        )
+
+    def handle_v2_monitor_alerts(self, lot_trip_id):
+        try:
+            alerts = V2_MONITORING_SERVICE.list_alerts(lot_trip_id)
+        except (LotTripNotFoundError, ValueError):
+            self.send_v2_lot_trip_not_found(lot_trip_id)
+            return
+        self.send_json(
+            {
+                "success": True,
+                "lotTripId": lot_trip_id,
+                "count": len(alerts),
+                "alerts": [serialize_alert(alert) for alert in alerts],
+            }
+        )
+
+    def send_v2_lot_trip_not_found(self, lot_trip_id):
+        self.send_json(
+            {
+                "success": False,
+                "error": {
+                    "code": "LOT_TRIP_NOT_FOUND",
+                    "message": "Lot trip is not registered",
+                    "lotTripId": lot_trip_id,
+                },
+            },
+            status=404,
+        )
 
     def serve_frontend_file(self, path):
         """Serves the dashboard from SD/frontend using the same backend server."""

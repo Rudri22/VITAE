@@ -8,6 +8,7 @@ from unittest.mock import patch
 try:
     from . import app
     from .alerting import InMemoryAlertRepository
+    from .monitoring_service import MonitoringService
     from .operational_service import OperationalTelemetryService
     from .state_repository import InMemoryTelemetryStateRepository
     from .telemetry_http import TelemetryHttpAdapter
@@ -15,6 +16,7 @@ try:
 except ImportError:
     import app
     from alerting import InMemoryAlertRepository
+    from monitoring_service import MonitoringService
     from operational_service import OperationalTelemetryService
     from state_repository import InMemoryTelemetryStateRepository
     from telemetry_http import TelemetryHttpAdapter
@@ -27,17 +29,26 @@ class V2SensorDataRouteTests(unittest.TestCase):
         state_repository.register_trip(app.V2_PROTOTYPE_TRIP)
         state_repository.register_device_assignment(app.V2_PROTOTYPE_ASSIGNMENT)
         processor = TelemetryProcessor(state_repository, state_repository)
+        alert_repository = InMemoryAlertRepository()
         service = OperationalTelemetryService(
             processor,
-            InMemoryAlertRepository(),
+            alert_repository,
         )
         self.adapter = TelemetryHttpAdapter(service)
-        self.adapter_patch = patch.object(
-            app,
-            "V2_TELEMETRY_HTTP_ADAPTER",
-            self.adapter,
+        self.patches = (
+            patch.object(app, "V2_TELEMETRY_HTTP_ADAPTER", self.adapter),
+            patch.object(
+                app,
+                "V2_MONITORING_SERVICE",
+                MonitoringService(
+                    state_repository,
+                    state_repository,
+                    alert_repository,
+                ),
+            ),
         )
-        self.adapter_patch.start()
+        for active_patch in self.patches:
+            active_patch.start()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), app.ApiHandler)
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.start()
@@ -46,7 +57,8 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
-        self.adapter_patch.stop()
+        for active_patch in reversed(self.patches):
+            active_patch.stop()
 
     def test_application_scope_has_explicit_prototype_identity(self):
         trip = app.V2_PROTOTYPE_TRIP
@@ -110,6 +122,71 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "INVALID_JSON")
         self.assertFalse(body["telemetryAccepted"])
 
+    def test_monitoring_routes_share_ingestion_state_and_alerts(self):
+        live_path = "/api/v2/monitor/live/lot-trip-sim-001"
+        alerts_path = "/api/v2/monitor/alerts/lot-trip-sim-001"
+        before_status, before = self.get_path(live_path)
+        alerts_status, no_alerts = self.get_path(alerts_path)
+        self.assertEqual(before_status, 200)
+        self.assertIsNone(before["liveState"])
+        self.assertEqual(
+            before["tripIdentity"]["lotTripId"],
+            "lot-trip-sim-001",
+        )
+        self.assertEqual(before["tripIdentity"]["productId"], "gardasil-9")
+        self.assertEqual(before["tripIdentity"]["status"], "ACTIVE")
+        self.assertEqual(before["openAlertCount"], 0)
+        self.assertIsNone(before["latestAlert"])
+        self.assertEqual(alerts_status, 200)
+        self.assertEqual(no_alerts["alerts"], [])
+
+        self.post(
+            {
+                "sample_id": "route-shared-safe",
+                "device_id": "device-sim-001",
+                "timestamp": "2026-08-19T18:00:00Z",
+                "temperature": 6.0,
+            }
+        )
+        _, safe = self.get_path(live_path)
+        self.assertEqual(safe["liveState"]["status"], "SAFE")
+        self.assertEqual(safe["liveState"]["latestTemperature"], 6.0)
+
+        self.post(
+            {
+                "sample_id": "route-shared-monitor",
+                "device_id": "device-sim-001",
+                "timestamp": "2026-08-19T18:10:00Z",
+                "temperature": 9.0,
+            }
+        )
+        _, monitor = self.get_path(live_path)
+        _, alerts = self.get_path(alerts_path)
+        self.assertEqual(monitor["liveState"]["status"], "MONITOR")
+        self.assertEqual(monitor["liveState"]["revision"], 2)
+        self.assertEqual(monitor["openAlertCount"], 1)
+        self.assertEqual(
+            monitor["latestAlert"]["alertType"],
+            "EXCURSION_MONITOR",
+        )
+        self.assertEqual(alerts["count"], 1)
+        self.assertEqual(alerts["alerts"][0]["alertType"], "EXCURSION_MONITOR")
+
+    def test_monitoring_routes_return_404_for_unknown_lot_trip(self):
+        for path in (
+            "/api/v2/monitor/live/not-a-real-lot-trip",
+            "/api/v2/monitor/alerts/not-a-real-lot-trip",
+        ):
+            with self.subTest(path=path):
+                status, body = self.get_path(path)
+                self.assertEqual(status, 404)
+                self.assertFalse(body["success"])
+                self.assertEqual(body["error"]["code"], "LOT_TRIP_NOT_FOUND")
+                self.assertEqual(
+                    body["error"]["lotTripId"],
+                    "not-a-real-lot-trip",
+                )
+
     def test_legacy_sensor_route_remains_admin_authenticated(self):
         status, body = self.post_path(
             "/api/sensor-data",
@@ -136,6 +213,18 @@ class V2SensorDataRouteTests(unittest.TestCase):
             body=body,
             headers={"Content-Type": "application/json"},
         )
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+        return response.status, payload
+
+    def get_path(self, path):
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            self.server.server_port,
+            timeout=2,
+        )
+        connection.request("GET", path)
         response = connection.getresponse()
         payload = json.loads(response.read().decode("utf-8"))
         connection.close()

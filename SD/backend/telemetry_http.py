@@ -24,6 +24,7 @@ try:
         TripIdentityError,
         TripNotActiveError,
         UnknownDeviceError,
+        TripIdentity,
     )
 except ImportError:
     from alerting import Alert
@@ -47,6 +48,7 @@ except ImportError:
         TripIdentityError,
         TripNotActiveError,
         UnknownDeviceError,
+        TripIdentity,
     )
 
 
@@ -147,16 +149,16 @@ def serialize_operational_result(
         "alertRequired": alert_required,
         "alertPersisted": alert_required,
         "processingResult": serialize_processing_result(result.processing_result),
-        "alert": _serialize_alert(result.alert),
+        "alert": serialize_alert(result.alert),
     }
 
 
 def serialize_processing_result(result: ProcessingResult) -> Dict[str, Any]:
     return {
-        "previousLiveState": _serialize_live_state(result.previous_live_state),
+        "previousLiveState": serialize_live_state(result.previous_live_state),
         "telemetryRecord": _serialize_telemetry_record(result.telemetry_record),
         "decision": _serialize_decision(result.decision),
-        "liveState": _serialize_live_state(result.live_state),
+        "liveState": serialize_live_state(result.live_state),
     }
 
 
@@ -232,7 +234,7 @@ def _serialize_decision(decision):
     }
 
 
-def _serialize_live_state(state):
+def serialize_live_state(state):
     if state is None:
         return None
     return {
@@ -260,7 +262,24 @@ def _serialize_live_state(state):
     }
 
 
-def _serialize_alert(alert: Optional[Alert]):
+def serialize_trip_identity(trip: TripIdentity):
+    return {
+        "tripId": trip.trip_id,
+        "lotTripId": trip.lot_trip_id,
+        "lotId": trip.lot_id,
+        "deviceId": trip.device_id,
+        "productId": trip.product_id,
+        "presentation": trip.presentation,
+        "state": trip.state,
+        "productRuleVersion": trip.product_rule_version,
+        "origin": trip.origin,
+        "destination": trip.destination,
+        "startTime": _iso_timestamp(trip.start_time),
+        "status": trip.status.value,
+    }
+
+
+def serialize_alert(alert: Optional[Alert]):
     if alert is None:
         return None
     return {
