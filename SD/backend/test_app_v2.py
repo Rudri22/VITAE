@@ -10,6 +10,13 @@ try:
     from .alerting import InMemoryAlertRepository
     from .monitoring_service import MonitoringService
     from .operational_service import OperationalTelemetryService
+    from .product_rules import (
+        GARDASIL_9_PRESENTATION,
+        GARDASIL_9_PRODUCT_ID,
+        GARDASIL_9_PRODUCT_NAME,
+        GARDASIL_9_SOURCE_VERSION,
+        GARDASIL_9_STATE,
+    )
     from .state_repository import InMemoryTelemetryStateRepository
     from .telemetry_http import TelemetryHttpAdapter
     from .telemetry_processor import TelemetryProcessor
@@ -18,6 +25,13 @@ except ImportError:
     from alerting import InMemoryAlertRepository
     from monitoring_service import MonitoringService
     from operational_service import OperationalTelemetryService
+    from product_rules import (
+        GARDASIL_9_PRESENTATION,
+        GARDASIL_9_PRODUCT_ID,
+        GARDASIL_9_PRODUCT_NAME,
+        GARDASIL_9_SOURCE_VERSION,
+        GARDASIL_9_STATE,
+    )
     from state_repository import InMemoryTelemetryStateRepository
     from telemetry_http import TelemetryHttpAdapter
     from telemetry_processor import TelemetryProcessor
@@ -72,6 +86,22 @@ class V2SensorDataRouteTests(unittest.TestCase):
             app.V2_TELEMETRY_PROCESSOR._state_repository,
             app.V2_STATE_REPOSITORY,
         )
+
+    def test_product_context_catalog_is_json_safe_and_unauthenticated(self):
+        status, body = self.get_path("/api/v2/catalog/product-contexts")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["productContexts"]), 1)
+        context = body["productContexts"][0]
+        self.assertEqual(context["productId"], GARDASIL_9_PRODUCT_ID)
+        self.assertEqual(context["productName"], GARDASIL_9_PRODUCT_NAME)
+        self.assertEqual(context["presentation"], GARDASIL_9_PRESENTATION)
+        self.assertEqual(context["state"], GARDASIL_9_STATE)
+        self.assertEqual(
+            context["productRuleVersion"],
+            GARDASIL_9_SOURCE_VERSION,
+        )
+        self.assertTrue(context["source"])
+        self.assertTrue(context["ruleIds"])
 
     def test_v2_route_reuses_state_and_returns_safe_then_monitor(self):
         safe_status, safe = self.post(

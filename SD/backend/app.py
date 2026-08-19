@@ -127,6 +127,7 @@ try:
     from .alerting import InMemoryAlertRepository
     from .monitoring_service import LotTripNotFoundError, MonitoringService
     from .operational_service import OperationalTelemetryService
+    from .product_catalog_service import ProductCatalogService
     from .product_rules import (
         GARDASIL_9_PRESENTATION,
         GARDASIL_9_PRODUCT_ID,
@@ -148,6 +149,7 @@ except ImportError:
     from alerting import InMemoryAlertRepository
     from monitoring_service import LotTripNotFoundError, MonitoringService
     from operational_service import OperationalTelemetryService
+    from product_catalog_service import ProductCatalogService
     from product_rules import (
         GARDASIL_9_PRESENTATION,
         GARDASIL_9_PRODUCT_ID,
@@ -217,6 +219,7 @@ V2_SHIPMENT_REGISTRATION_SERVICE = V2ShipmentRegistrationService(
 V2_SHIPMENT_LIFECYCLE_SERVICE = V2ShipmentLifecycleService(
     V2_STATE_REPOSITORY
 )
+V2_PRODUCT_CATALOG_SERVICE = ProductCatalogService()
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -390,6 +393,27 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+
+        if path == "/api/v2/catalog/product-contexts":
+            contexts = V2_PRODUCT_CATALOG_SERVICE.list_supported_contexts()
+            self.send_json(
+                {
+                    "productContexts": [
+                        {
+                            "productId": context.product_id,
+                            "productName": context.product_name,
+                            "presentation": context.presentation,
+                            "state": context.state,
+                            "productRuleVersion": context.product_rule_version,
+                            "source": context.source,
+                            "sourceUrl": context.source_url,
+                            "ruleIds": list(context.rule_ids),
+                        }
+                        for context in contexts
+                    ]
+                }
+            )
+            return
 
         if path.startswith("/api/v2/monitor/live/"):
             lot_trip_id = path.removeprefix("/api/v2/monitor/live/")

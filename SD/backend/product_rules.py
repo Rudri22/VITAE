@@ -7,6 +7,7 @@ except ImportError:
 
 
 GARDASIL_9_PRODUCT_ID = "gardasil-9"
+GARDASIL_9_PRODUCT_NAME = "GARDASIL 9"
 GARDASIL_9_PRESENTATION = "single-dose-prefilled-syringe-0.5-ml"
 GARDASIL_9_STATE = "unopened"
 GARDASIL_9_SOURCE = "FDA GARDASIL 9 Package Insert, section 16"
@@ -17,6 +18,7 @@ GARDASIL_9_RULES = (
     ProductRule(
         rule_id="gardasil9-pfs-unopened-normal-storage-v1",
         product_id=GARDASIL_9_PRODUCT_ID,
+        product_name=GARDASIL_9_PRODUCT_NAME,
         presentation=GARDASIL_9_PRESENTATION,
         state=GARDASIL_9_STATE,
         rule_type=ProductRuleType.NORMAL_STORAGE,
@@ -30,6 +32,7 @@ GARDASIL_9_RULES = (
     ProductRule(
         rule_id="gardasil9-pfs-unopened-high-temp-excursion-v1",
         product_id=GARDASIL_9_PRODUCT_ID,
+        product_name=GARDASIL_9_PRODUCT_NAME,
         presentation=GARDASIL_9_PRESENTATION,
         state=GARDASIL_9_STATE,
         rule_type=ProductRuleType.PERMITTED_EXCURSION,
@@ -45,6 +48,7 @@ GARDASIL_9_RULES = (
     ProductRule(
         rule_id="gardasil9-pfs-unopened-low-temp-excursion-v1",
         product_id=GARDASIL_9_PRODUCT_ID,
+        product_name=GARDASIL_9_PRODUCT_NAME,
         presentation=GARDASIL_9_PRESENTATION,
         state=GARDASIL_9_STATE,
         rule_type=ProductRuleType.PERMITTED_EXCURSION,

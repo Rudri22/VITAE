@@ -44,6 +44,7 @@ class ProductRule:
     presentation: Optional[str] = None
     state: Optional[str] = None
     source_url: Optional[str] = None
+    product_name: Optional[str] = None
 
 
 @dataclass(frozen=True)
