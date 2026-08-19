@@ -1,4 +1,5 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -122,10 +123,73 @@ except ImportError:
         verify_organization_delivery,
     )
 
+try:
+    from .alerting import InMemoryAlertRepository
+    from .operational_service import OperationalTelemetryService
+    from .product_rules import (
+        GARDASIL_9_PRESENTATION,
+        GARDASIL_9_PRODUCT_ID,
+        GARDASIL_9_SOURCE_VERSION,
+        GARDASIL_9_STATE,
+    )
+    from .state_repository import InMemoryTelemetryStateRepository
+    from .telemetry_http import TelemetryHttpAdapter
+    from .telemetry_processor import TelemetryProcessor
+    from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
+except ImportError:
+    from alerting import InMemoryAlertRepository
+    from operational_service import OperationalTelemetryService
+    from product_rules import (
+        GARDASIL_9_PRESENTATION,
+        GARDASIL_9_PRODUCT_ID,
+        GARDASIL_9_SOURCE_VERSION,
+        GARDASIL_9_STATE,
+    )
+    from state_repository import InMemoryTelemetryStateRepository
+    from telemetry_http import TelemetryHttpAdapter
+    from telemetry_processor import TelemetryProcessor
+    from trip_identity import DeviceAssignment, TripIdentity, TripStatus
+
 
 HOST = "127.0.0.1"
 PORT = 8000
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+
+V2_PROTOTYPE_TRIP = TripIdentity(
+    trip_id="trip-sim-001",
+    lot_trip_id="lot-trip-sim-001",
+    lot_id="lot-sim-001",
+    device_id="device-sim-001",
+    product_id=GARDASIL_9_PRODUCT_ID,
+    presentation=GARDASIL_9_PRESENTATION,
+    state=GARDASIL_9_STATE,
+    product_rule_version=GARDASIL_9_SOURCE_VERSION,
+    origin="Beirut Distribution Center",
+    destination="AUB Medical Center",
+    start_time=datetime(2026, 8, 19, 0, 0, tzinfo=timezone.utc),
+    status=TripStatus.ACTIVE,
+)
+V2_PROTOTYPE_ASSIGNMENT = DeviceAssignment(
+    assignment_id="assignment-sim-001",
+    device_id=V2_PROTOTYPE_TRIP.device_id,
+    trip_id=V2_PROTOTYPE_TRIP.trip_id,
+    lot_trip_id=V2_PROTOTYPE_TRIP.lot_trip_id,
+    assigned_at=V2_PROTOTYPE_TRIP.start_time,
+    active=True,
+)
+V2_STATE_REPOSITORY = InMemoryTelemetryStateRepository()
+V2_STATE_REPOSITORY.register_trip(V2_PROTOTYPE_TRIP)
+V2_STATE_REPOSITORY.register_device_assignment(V2_PROTOTYPE_ASSIGNMENT)
+V2_ALERT_REPOSITORY = InMemoryAlertRepository()
+V2_TELEMETRY_PROCESSOR = TelemetryProcessor(
+    V2_STATE_REPOSITORY,
+    V2_STATE_REPOSITORY,
+)
+V2_OPERATIONAL_SERVICE = OperationalTelemetryService(
+    V2_TELEMETRY_PROCESSOR,
+    V2_ALERT_REPOSITORY,
+)
+V2_TELEMETRY_HTTP_ADAPTER = TelemetryHttpAdapter(V2_OPERATIONAL_SERVICE)
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -164,6 +228,10 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/sensor-data":
             self.handle_sensor_data()
+            return
+
+        if path == "/api/v2/sensor-data":
+            self.handle_v2_sensor_data()
             return
 
         if path == "/api/shipments":
@@ -462,6 +530,28 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.send_json(result, status=201)
         except ValueError as error:
             self.send_json({"error": str(error)}, status=400)
+
+    def handle_v2_sensor_data(self):
+        """Translate HTTP JSON into the isolated operational telemetry pipeline."""
+        try:
+            payload = self.read_json_body()
+        except ValueError:
+            self.send_json(
+                {
+                    "success": False,
+                    "telemetryAccepted": False,
+                    "alertPersisted": False,
+                    "error": {
+                        "code": "INVALID_JSON",
+                        "message": "Request body must be a valid JSON object",
+                    },
+                },
+                status=400,
+            )
+            return
+
+        response = V2_TELEMETRY_HTTP_ADAPTER.handle_post(payload)
+        self.send_json(response.body, status=response.status_code)
 
     def handle_create_or_update_shipment(self):
         """Creates shipment records from real API data instead of hardcoded examples."""
