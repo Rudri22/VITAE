@@ -13,6 +13,8 @@ const appState = {
   liveTimer: null,
   workspaceTimer: null,
   workspaceRenderPending: false,
+  v2Monitoring: { status: "idle", data: null, error: null },
+  stopV2MonitoringPoll: null,
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -23,6 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
 window.addEventListener("vitae:session-expired", () => {
   stopLivePolling();
   stopWorkspacePolling();
+  stopV2MonitoringPolling();
   appState.user = null;
   appState.data = null;
   window.history.replaceState({}, "", "/login");
@@ -147,6 +150,7 @@ async function loadWorkspace() {
   if (!config) return showDenied(window.location.pathname, "/login");
   stopLivePolling();
   stopWorkspacePolling();
+  stopV2MonitoringPolling();
   appState.page = defaultPage(appState.user.role);
   showOnly("roleView");
   document.getElementById("roleView").innerHTML = `<main class="foundation-state-page" aria-busy="true"><span class="foundation-state-spinner" aria-hidden="true"></span><h1>Loading your VITAE workspace</h1><p>Connecting to live operations dataâ€¦</p></main>`;
@@ -156,6 +160,11 @@ async function loadWorkspace() {
     renderWorkspace();
     await refreshLiveShipments();
     startLivePolling();
+  }
+  if (appState.user.role === "organization_user") {
+    appState.v2Monitoring = { status: "loading", data: null, error: null };
+    await refreshV2Monitoring(false);
+    startV2MonitoringPolling();
   }
   renderWorkspace();
   startWorkspacePolling();
@@ -359,6 +368,59 @@ function stopWorkspacePolling() {
   appState.workspaceRenderPending = false;
 }
 
+async function refreshV2Monitoring(render = true) {
+  if (appState.user?.role !== "organization_user") return;
+  try {
+    const data = await window.VitaeV2MonitoringApi.fetchLive("lot-trip-sim-001");
+    appState.v2Monitoring = {
+      status: "ready",
+      data,
+      error: null,
+      lastFetchedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    appState.v2Monitoring = {
+      ...appState.v2Monitoring,
+      status: "error",
+      error: error.message || "Live monitoring is temporarily unavailable.",
+      lastFetchedAt: new Date().toISOString(),
+    };
+  }
+  if (render && appState.page === "dashboard" && !isProtectedWorkflow()) renderWorkspace();
+}
+
+function startV2MonitoringPolling() {
+  stopV2MonitoringPolling();
+  appState.stopV2MonitoringPoll = window.VitaeV2MonitoringApi.startPolling(
+    "lot-trip-sim-001",
+    {
+      onData: (data) => {
+        appState.v2Monitoring = {
+          status: "ready",
+          data,
+          error: null,
+          lastFetchedAt: new Date().toISOString(),
+        };
+        if (appState.page === "dashboard" && !isProtectedWorkflow()) renderWorkspace();
+      },
+      onError: (error) => {
+        appState.v2Monitoring = {
+          ...appState.v2Monitoring,
+          status: "error",
+          error: error.message || "Live monitoring is temporarily unavailable.",
+          lastFetchedAt: new Date().toISOString(),
+        };
+        if (appState.page === "dashboard" && !isProtectedWorkflow()) renderWorkspace();
+      },
+    },
+  );
+}
+
+function stopV2MonitoringPolling() {
+  if (appState.stopV2MonitoringPoll) appState.stopV2MonitoringPoll();
+  appState.stopV2MonitoringPoll = null;
+}
+
 function openMap(shipment) {
   if (!shipment) return;
   closeMap();
@@ -419,6 +481,7 @@ function defaultPage(role) {
 function logout() {
   stopLivePolling();
   stopWorkspacePolling();
+  stopV2MonitoringPolling();
   closeMap();
   window.VitaeAuth.clearSession();
   appState.user = null;
@@ -438,6 +501,7 @@ function navigate(path, replace = false) {
 function showLogin(message = "") {
   stopLivePolling();
   stopWorkspacePolling();
+  stopV2MonitoringPolling();
   showOnly("loginView");
   const error = document.getElementById("loginError");
   const button = document.getElementById("loginButton");
@@ -450,6 +514,7 @@ function showLogin(message = "") {
 function showDenied(requestedPath, expectedPath) {
   stopLivePolling();
   stopWorkspacePolling();
+  stopV2MonitoringPolling();
   showOnly("deniedView");
   document.getElementById("deniedView").innerHTML = `<section><div class="vitae-brand"><span class="vitae-brand-mark">V</span><div><strong>VITAE</strong><span>Access control</span></div></div><span class="foundation-error-code">403</span><h1>Access denied</h1><p>Your ${window.VitaeUI.escape(window.VitaeUI.humanize(appState.user?.role))} account cannot open ${window.VitaeUI.escape(requestedPath)}.</p><div><button class="foundation-primary" data-go-workspace type="button">Return to my workspace</button><button class="foundation-secondary" data-denied-logout type="button">Log out</button></div><small>Allowed workspace: ${window.VitaeUI.escape(expectedPath)}</small></section>`;
 }

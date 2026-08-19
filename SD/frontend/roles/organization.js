@@ -50,6 +50,7 @@
         ${cockpitMetric("Arriving Today", arrivingToday, "Expected before day end")}
         ${cockpitMetric("Available Drivers", summary.availableDrivers || 0, "Ready for assignment")}
       </section>
+      ${v2MonitoringCard(state.v2Monitoring)}
       <div class="org-cockpit-workspace">
         <section class="foundation-panel org-live-board"><header><div><span class="foundation-eyebrow">Current network</span><h2>Live Shipments</h2></div><button class="foundation-link" data-role-page="tracking" type="button">Open Live Tracking</button></header>
           ${live.length ? `<div class="org-live-rows">${live.map(liveShipmentRow).join("")}</div>` : window.VitaeUI.empty("No active shipments are currently moving.")}
@@ -57,6 +58,57 @@
         </section>
         <section class="foundation-panel org-action-center"><header><div><span class="foundation-eyebrow">Prioritized work</span><h2>Action Center</h2></div></header>${actionCenter(data)}<footer><button class="foundation-link" data-role-page="alerts" type="button">View all alerts</button></footer></section>
       </div>`;
+  }
+
+  function v2MonitoringCard(monitoring) {
+    if (!monitoring || monitoring.status === "idle" || monitoring.status === "loading") {
+      return `<section class="foundation-panel org-v2-monitor" aria-busy="true"><header><div><span class="foundation-eyebrow">Prototype lot</span><h2>VITAE Live Monitoring - v2</h2></div></header>${window.VitaeUI.empty("Loading live monitoring state.")}</section>`;
+    }
+
+    const payload = monitoring.data;
+    if (!payload) {
+      return `<section class="foundation-panel org-v2-monitor"><header><div><span class="foundation-eyebrow">Prototype lot</span><h2>VITAE Live Monitoring - v2</h2></div></header><p class="org-v2-monitor-error" role="alert">${esc(monitoring.error || "Live monitoring is temporarily unavailable.")}</p></section>`;
+    }
+
+    const trip = payload.tripIdentity;
+    const live = payload.liveState;
+    const alert = payload.latestAlert;
+    const status = live?.status || "WAITING_FOR_TELEMETRY";
+    const statusLabel = live?.status || "Waiting for telemetry";
+    const alertSummary = alert ? `${human(alert.alertType)} · ${human(alert.severity)}` : "No active alert";
+    return `<section class="foundation-panel org-v2-monitor" data-v2-monitor-status="${esc(status)}">
+      <header><div><span class="foundation-eyebrow">Prototype lot</span><h2>VITAE Live Monitoring - v2</h2><p>${esc(productName(trip.productId))} · ${esc(trip.origin)} → ${esc(trip.destination)}</p></div>${monitoring.status === "error" ? `<span class="org-v2-monitor-stale">Update unavailable</span>` : ""}</header>
+      <dl>
+        ${monitoringDetail("Current status", window.VitaeUI.badge(statusLabel, statusTone(status)), true)}
+        ${monitoringDetail("Latest temperature", formatTemperature(live?.latestTemperature))}
+        ${monitoringDetail("Excursion used", formatUtilization(live?.excursionUtilization))}
+        ${monitoringDetail("Latest alert", alertSummary)}
+        ${monitoringDetail("Last updated", live?.lastUpdated ? dateTime(live.lastUpdated) : "No telemetry received")}
+      </dl>
+    </section>`;
+  }
+
+  function monitoringDetail(label, value, html = false) {
+    return `<div><dt>${esc(label)}</dt><dd>${html ? value : esc(value)}</dd></div>`;
+  }
+
+  function formatTemperature(value) {
+    return typeof value === "number" ? `${value.toFixed(1)} °C` : "No reading";
+  }
+
+  function formatUtilization(value) {
+    return typeof value === "number" ? `${(value * 100).toFixed(1)}%` : "Not applicable";
+  }
+
+  function productName(productId) {
+    return String(productId || "Unknown product").replaceAll("-", " ").toUpperCase();
+  }
+
+  function statusTone(status) {
+    if (status === "SAFE") return "safe";
+    if (["CRITICAL", "RULE_VIOLATION"].includes(status)) return "critical";
+    if (["MONITOR", "AT_RISK", "DATA_ERROR"].includes(status)) return "warning";
+    return "neutral";
   }
 
   function cockpitMetric(label, value, context) {
