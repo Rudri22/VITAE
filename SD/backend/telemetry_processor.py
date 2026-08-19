@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Mapping, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 try:
     from .risk_rules import (
@@ -43,6 +43,7 @@ except ImportError:
 
 @dataclass(frozen=True)
 class ProcessingResult:
+    previous_live_state: Optional[LiveState]
     telemetry_record: TelemetryRecord
     decision: StatusDecision
     live_state: LiveState
@@ -116,6 +117,7 @@ class TelemetryProcessor:
             expected_revision,
         )
         return ProcessingResult(
+            previous_live_state=previous_live_state,
             telemetry_record=record,
             decision=decision,
             live_state=next_live_state,

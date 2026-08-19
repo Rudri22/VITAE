@@ -313,7 +313,12 @@ class TelemetryProcessorTests(unittest.TestCase):
 
         self.assertEqual(
             tuple(field.name for field in fields(result)),
-            ("telemetry_record", "decision", "live_state"),
+            (
+                "previous_live_state",
+                "telemetry_record",
+                "decision",
+                "live_state",
+            ),
         )
         self.assertIsInstance(result.telemetry_record, TelemetryRecord)
         self.assertIsInstance(result.decision, StatusDecision)
@@ -336,6 +341,92 @@ class TelemetryProcessorTests(unittest.TestCase):
         self.assertEqual(
             result.telemetry_record.timestamp,
             result.live_state.last_sample_timestamp,
+        )
+
+    def test_first_successful_sample_has_no_previous_live_state(self):
+        result = self.processor.process(raw_sample())
+        self.assertIsNone(result.previous_live_state)
+
+    def test_second_sample_returns_exact_prior_live_state(self):
+        first = self.processor.process(raw_sample())
+        second = self.processor.process(
+            raw_sample(
+                sample_id="sample-002",
+                timestamp=BASE_TIME + timedelta(minutes=5),
+            )
+        )
+
+        self.assertIs(second.previous_live_state, first.live_state)
+        self.assertEqual(
+            second.previous_live_state.revision,
+            second.live_state.revision - 1,
+        )
+        self.assertEqual(
+            second.previous_live_state.last_sample_id,
+            first.telemetry_record.sample_id,
+        )
+
+    def test_committing_next_state_does_not_mutate_previous_state(self):
+        first = self.processor.process(raw_sample(temperature=9.0))
+        prior_snapshot = first.live_state
+        self.processor.process(
+            raw_sample(
+                sample_id="sample-002",
+                timestamp=BASE_TIME + timedelta(minutes=30),
+                temperature=9.0,
+            )
+        )
+
+        self.assertEqual(prior_snapshot.revision, 1)
+        self.assertEqual(prior_snapshot.last_sample_id, "sample-001")
+        self.assertEqual(prior_snapshot.cumulative_excursion_duration_minutes, 0.0)
+
+    def test_recovery_result_exposes_prior_excursion_state(self):
+        self.processor.process(raw_sample(temperature=9.0))
+        excursion = self.processor.process(
+            raw_sample(
+                sample_id="sample-002",
+                timestamp=BASE_TIME + timedelta(minutes=30),
+                temperature=9.0,
+            )
+        )
+        recovery = self.processor.process(
+            raw_sample(
+                sample_id="sample-003",
+                timestamp=BASE_TIME + timedelta(minutes=40),
+                temperature=6.0,
+            )
+        )
+
+        self.assertIs(recovery.previous_live_state, excursion.live_state)
+        self.assertIsNotNone(recovery.previous_live_state.active_rule_id)
+        self.assertEqual(
+            recovery.previous_live_state.cumulative_excursion_duration_minutes,
+            30.0,
+        )
+        self.assertEqual(recovery.decision.status, ApplicationStatus.SAFE)
+
+    def test_duplicate_failure_does_not_replace_stored_previous_state(self):
+        first = self.processor.process(raw_sample())
+        with self.assertRaises(DuplicateTelemetrySampleError):
+            self.processor.process(raw_sample())
+        self.assertIs(
+            self.repository.get_live_state(LOT_TRIP_ID),
+            first.live_state,
+        )
+
+    def test_out_of_order_failure_does_not_replace_stored_previous_state(self):
+        first = self.processor.process(raw_sample())
+        with self.assertRaises(OutOfOrderTelemetryError):
+            self.processor.process(
+                raw_sample(
+                    sample_id="sample-old",
+                    timestamp=BASE_TIME - timedelta(minutes=1),
+                )
+            )
+        self.assertIs(
+            self.repository.get_live_state(LOT_TRIP_ID),
+            first.live_state,
         )
 
     def assert_no_telemetry_written(self):

@@ -20,6 +20,8 @@ try:
     from .simulator import (
         SIMULATION_LOT_TRIP_ID,
         STATUS_LADDER_SCENARIO,
+        ScenarioPoint,
+        SimulationScenario,
         build_local_environment,
         run_scenario,
     )
@@ -40,6 +42,8 @@ except ImportError:
     from simulator import (
         SIMULATION_LOT_TRIP_ID,
         STATUS_LADDER_SCENARIO,
+        ScenarioPoint,
+        SimulationScenario,
         build_local_environment,
         run_scenario,
     )
@@ -259,6 +263,35 @@ class AlertPolicyTests(unittest.TestCase):
             repository.get_alert(alert.alert_id).status,
             AlertStatus.OPEN,
         )
+
+    def test_processor_result_drives_transition_policy_without_reconstruction(self):
+        environment = build_local_environment()
+        scenario = SimulationScenario(
+            scenario_id="alert-contract",
+            name="Alert contract",
+            points=(
+                ScenarioPoint(0.0, 6.0),
+                ScenarioPoint(10.0, 9.0),
+                ScenarioPoint(20.0, 9.0),
+            ),
+        )
+        steps = run_scenario(
+            environment.processor,
+            scenario,
+            device_id=environment.device_id,
+            start_time=environment.start_time,
+        )
+
+        alerts = tuple(
+            evaluate_alert_policy(
+                step.result.previous_live_state,
+                step.result,
+            )
+            for step in steps
+        )
+        self.assertIsNone(alerts[0])
+        self.assertEqual(alerts[1].alert_type, AlertType.EXCURSION_MONITOR)
+        self.assertIsNone(alerts[2])
 
     def test_alert_policy_contains_no_rule_threshold_calculation(self):
         source = inspect.getsource(alerting)
