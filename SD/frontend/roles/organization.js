@@ -159,6 +159,13 @@
   function createWorkflow(state, org) {
     const data = state.data, d = org.draft;
     const facilities = data.facilities || [], drivers = (data.drivers || []).filter((item) => ["available", "assigned"].includes(item.status));
+    const setup = state.v2ShipmentOptions || { status: "idle", productContexts: [], sensors: [] };
+    const contexts = setup.productContexts || [];
+    const availableSensors = (setup.sensors || []).filter(isAvailableSensor);
+    const v2Enabled = d.v2Enabled === true;
+    const selectedContext = d.v2ContextIndex === undefined || d.v2ContextIndex === ""
+      ? null
+      : contexts[Number(d.v2ContextIndex)];
     const category = d.productCategory || "", profile = PRODUCT_PROFILES[category] || PRODUCT_PROFILES.Medicine;
     const departure = d.departureAt || toLocalInput(new Date(Date.now() + 15 * 60 * 1000));
     const arrival = d.expectedArrival || toLocalInput(new Date(new Date(departure).getTime() + profile.hours * 60 * 60 * 1000));
@@ -170,13 +177,38 @@
         <label class="org-quick-type"><span>Type of item *</span><select name="productCategory" required><option value="">Choose what you are moving</option>${options(CATEGORIES, category)}</select></label>
         ${field("Amount", "quantity", d.quantity, "number", true, "min=\"0.01\" step=\"0.01\" placeholder=\"Example: 10\"")}
         <label><span>Unit *</span><select name="unit" required>${options(["boxes", "units", "bags", "trays", "liters", "kilograms"], d.unit || "boxes")}</select></label>
-        ${field("Item name (optional)", "productName", d.productName, "text", false, "placeholder=\"Example: Insulin\"")}
+        ${field(v2Enabled ? "Item name" : "Item name (optional)", "productName", selectedContext?.productName || d.productName, "text", v2Enabled, `${v2Enabled ? "readonly" : ""} placeholder=\"Example: Insulin\"`)}
       </div>
       <div class="org-quick-section"><h3>Pickup and delivery</h3><div class="org-form-grid"><label><span>Pick up from *</span><select name="originFacilityId" required><option value="">Choose pickup</option>${recordOptions(facilities, "facilityId", "name", d.originFacilityId)}</select></label><label><span>Deliver to *</span><select name="destinationFacilityId" required><option value="">Choose destination</option>${recordOptions(facilities, "facilityId", "name", d.destinationFacilityId)}</select></label><label><span>Send request to *</span><select name="driverId" required><option value="">Choose driver</option>${recordOptions(drivers, "driverId", "name", selectedDriver)}</select><small>The Driver must accept before the trip begins.</small></label></div></div>
       <aside class="org-auto-plan"><span aria-hidden="true">✓</span><div><strong>VITAE prepares the rest</strong><p><b data-auto-temperature>${profile.min}°C to ${profile.max}°C</b> storage · target delivery within <b data-auto-hours>${profile.hours} hours</b> · refrigerated vehicle and sensor assigned automatically.</p></div></aside>
+      ${v2SetupFields(setup, d, contexts, availableSensors, selectedContext)}
       <details class="org-request-options"><summary>Change temperature, timing, or instructions</summary><p>Use these only when this shipment has special requirements.</p><div class="org-form-grid">${field("Minimum °C", "safeTemperatureMin", d.safeTemperatureMin ?? profile.min, "number", false, "step=\"0.1\"")}${field("Maximum °C", "safeTemperatureMax", d.safeTemperatureMax ?? profile.max, "number", false, "step=\"0.1\"")}${field("Ready for pickup", "departureAt", departure, "datetime-local")}${field("Deliver by", "expectedArrival", arrival, "datetime-local")}<label class="org-wide"><span>Special instructions</span><textarea name="handlingNotes" rows="3" placeholder="Optional">${esc(d.handlingNotes || profile.handling)}</textarea></label></div></details>
       <input name="submissionId" type="hidden" value="${esc(d.submissionId)}"><div class="org-quick-submit"><p>The request appears immediately in the selected Driver’s app.</p><button class="foundation-primary" type="submit" ${org.saving || !drivers.length ? "disabled" : ""}>${org.saving ? "Sending…" : "Send Request to Driver"}</button></div>
     </form></section>`;
+  }
+
+  function v2SetupFields(setup, draft, contexts, sensors, selectedContext) {
+    const enabled = draft.v2Enabled === true;
+    const unavailable = setup.status !== "ready";
+    const message = setup.status === "error"
+      ? setup.error || "V2 monitoring options are unavailable."
+      : setup.status === "loading" || setup.status === "idle"
+        ? "Loading verified product contexts and devices."
+        : !contexts.length
+          ? "No verified product contexts are currently available."
+          : "Uses verified ProductRules and deterministic product condition monitoring.";
+    return `<section class="org-v2-setup ${enabled ? "enabled" : ""}">
+      <label class="org-v2-toggle">
+        <input name="v2Enabled" type="checkbox" value="true" ${enabled ? "checked" : ""} ${unavailable || !contexts.length ? "disabled" : ""}>
+        <span><strong>Enable V2 monitoring</strong><small>${esc(message)}</small></span>
+      </label>
+      ${enabled ? `<div class="org-v2-fields">
+        <label><span>Product context *</span><select name="v2ContextIndex" required><option value="">Choose a verified context</option>${contexts.map((context, index) => `<option value="${index}" ${String(index) === String(draft.v2ContextIndex) ? "selected" : ""}>${esc(`${context.productName} - ${human(context.presentation)} - ${human(context.state)}`)}</option>`).join("")}</select></label>
+        <label><span>Lot ID *</span><input name="v2LotId" value="${esc(draft.v2LotId)}" required maxlength="100" placeholder="Manufacturer lot identifier"></label>
+        <label><span>Device *</span><select name="v2DeviceId" required><option value="">Choose an available sensor</option>${sensors.map((sensor) => `<option value="${esc(sensor.sensorId)}" ${sensor.sensorId === draft.v2DeviceId ? "selected" : ""}>${esc(`${sensor.sensorId} - ${human(sensor.status)} - ${sensor.batteryLevel ?? "?"}% battery`)}</option>`).join("")}</select>${sensors.length ? "" : "<small>No available sensors. Legacy shipment creation remains available.</small>"}</label>
+        <label><span>Rule version</span><input value="${esc(selectedContext?.productRuleVersion || "Select a product context")}" readonly aria-readonly="true"><small>Verified and pinned by the backend.</small></label>
+      </div>` : ""}
+    </section>`;
   }
 
   function shipmentsPage(state, org) {
@@ -259,9 +291,37 @@
     const form = event.target, org = orgState(state);
     if (form.dataset.orgForm === "quick-request") {
       event.preventDefault();
-      const payload = Object.fromEntries(new FormData(form).entries());
-      Object.assign(org.draft, payload);
+      const formValues = Object.fromEntries(new FormData(form).entries());
+      const v2Enabled = form.elements.v2Enabled?.checked === true;
+      Object.assign(org.draft, formValues, { v2Enabled });
+      const payload = { ...formValues };
+      delete payload.v2Enabled;
+      delete payload.v2ContextIndex;
+      delete payload.v2LotId;
+      delete payload.v2DeviceId;
       org.formError = "";
+      if (v2Enabled) {
+        const setup = state.v2ShipmentOptions || {};
+        const context = formValues.v2ContextIndex === undefined || formValues.v2ContextIndex === ""
+          ? null
+          : (setup.productContexts || [])[Number(formValues.v2ContextIndex)];
+        const sensor = (setup.sensors || []).find(
+          (item) => item.sensorId === formValues.v2DeviceId && isAvailableSensor(item),
+        );
+        if (!context) { org.formError = "Choose a verified product context."; actions.render(); return true; }
+        if (!String(formValues.v2LotId || "").trim()) { org.formError = "Enter the manufacturer lot ID."; actions.render(); return true; }
+        if (!sensor) { org.formError = "Choose an available sensor for V2 monitoring."; actions.render(); return true; }
+        payload.productName = context.productName;
+        payload.sensorId = sensor.sensorId;
+        payload.v2Monitoring = {
+          enabled: true,
+          productId: context.productId,
+          presentation: context.presentation,
+          state: context.state,
+          lotId: String(formValues.v2LotId).trim(),
+          deviceId: sensor.sensorId,
+        };
+      }
       if (payload.originFacilityId === payload.destinationFacilityId) { org.formError = "Pickup and destination must be different."; actions.render(); return true; }
       if (payload.safeTemperatureMin !== "" && payload.safeTemperatureMax !== "" && Number(payload.safeTemperatureMin) >= Number(payload.safeTemperatureMax)) { org.formError = "Minimum temperature must be below maximum temperature."; actions.render(); return true; }
       if (payload.departureAt && payload.expectedArrival && new Date(payload.expectedArrival) <= new Date(payload.departureAt)) { org.formError = "The delivery deadline must be after the pickup time."; actions.render(); return true; }
@@ -269,7 +329,7 @@
       org.saving = true;
       const button = form.querySelector('button[type="submit"]'), feedback = form.querySelector(".org-request-feedback");
       button.disabled = true; button.textContent = "Sending request…"; feedback.textContent = "Sending the request to the Driver.";
-      return perform(async () => { const result = await api("/api/organization/shipments", "POST", payload); org.draft = { submissionId: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}` }; org.saving = false; await actions.reload(); await actions.refreshLive(); state.page = "shipments"; actions.render(); actions.notify(result.created === false ? "This request already exists; no duplicate was added." : "Request sent. Waiting for the Driver to accept it."); }, actions, (error) => { org.saving = false; feedback.textContent = ""; button.disabled = false; button.textContent = "Send Request to Driver"; org.formError = error.message; const errorBox = form.querySelector(".org-inline-error") || document.createElement("p"); errorBox.className = "org-inline-error"; errorBox.setAttribute("role", "alert"); errorBox.textContent = error.message; if (!errorBox.parentNode) form.querySelector("header").after(errorBox); });
+      return perform(async () => { const result = await api("/api/organization/shipments", "POST", payload); org.draft = { submissionId: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}` }; org.saving = false; await actions.reload(); await actions.reloadV2Options(); await actions.refreshLive(); state.page = "shipments"; actions.render(); actions.notify(result.created === false ? "This request already exists; no duplicate was added." : "Request sent. Waiting for the Driver to accept it."); }, actions, (error) => { org.saving = false; feedback.textContent = ""; button.disabled = false; button.textContent = "Send Request to Driver"; org.formError = error.message; const errorBox = form.querySelector(".org-inline-error") || document.createElement("p"); errorBox.className = "org-inline-error"; errorBox.setAttribute("role", "alert"); errorBox.textContent = error.message; if (!errorBox.parentNode) form.querySelector("header").after(errorBox); });
     }
     if (form.dataset.orgForm === "assign") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await api(`/api/organization/shipments/${form.dataset.id}/driver`, "PATCH", payload); await actions.reload(); actions.notify("Driver assignment updated."); }, actions); }
     if (form.dataset.orgForm === "verify") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); if (!confirm(`Confirm final decision: ${payload.decision}?`)) return true; return perform(async () => { await api(`/api/organization/shipments/${form.dataset.id}/verification`, "PATCH", payload); org.selectedShipmentId = null; await actions.reload(); actions.notify("Delivery verification recorded."); }, actions); }
@@ -281,6 +341,21 @@
   function handleFilter(event, state, actions) {
     const control = event.target.closest("[data-org-filter]");
     if (!control) {
+      if (["v2Enabled", "v2ContextIndex", "v2LotId", "v2DeviceId"].includes(event.target.name)) {
+        const org = orgState(state), form = event.target.form;
+        const values = Object.fromEntries(new FormData(form).entries());
+        Object.assign(org.draft, values, {
+          v2Enabled: form.elements.v2Enabled?.checked === true,
+        });
+        if (event.target.name === "v2ContextIndex") {
+          const context = event.target.value === ""
+            ? null
+            : (state.v2ShipmentOptions?.productContexts || [])[Number(event.target.value)];
+          org.draft.productName = context?.productName || "";
+        }
+        if (["v2Enabled", "v2ContextIndex"].includes(event.target.name)) actions.render();
+        return true;
+      }
       if (event.target.name === "productCategory" && PRODUCT_PROFILES[event.target.value]) {
         const form = event.target.form, profile = PRODUCT_PROFILES[event.target.value];
         if (form?.elements.safeTemperatureMin) form.elements.safeTemperatureMin.value = profile.min;
@@ -327,6 +402,7 @@
     return `${acknowledge}${actionTaken}${notify}${escalate}${actionButton("Mark resolved", "resolved", item.alertId)}`;
   }
   function findShipment(state, id) { return (state.live.shipments || []).find((item) => item.shipmentId === id) || (state.data.shipments || []).find((item) => item.shipmentId === id); }
+  function isAvailableSensor(sensor) { return sensor && sensor.status !== "offline" && sensor.connectionStatus !== "offline" && !sensor.shipmentId; }
   function unique(items, field) { return [...new Set(items.map((item) => item[field]).filter(Boolean))]; }
   function range(item) { return item.safeTemperatureMin == null || item.safeTemperatureMax == null ? "Not specified" : `${item.safeTemperatureMin}°C to ${item.safeTemperatureMax}°C`; }
   function temperature(value) { return value == null ? "No reading" : `${value}°C`; }

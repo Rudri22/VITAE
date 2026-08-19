@@ -4651,6 +4651,15 @@ a:focus-visible {
 .org-request-options summary { padding: 13px 15px; color: var(--vitae-brand-strong); font-size: .78rem; font-weight: 800; cursor: pointer; }
 .org-request-options > p { padding: 0 15px; color: var(--vitae-muted); font-size: .7rem; }
 .org-request-options .org-form-grid { padding: 14px 15px 16px; }
+.org-v2-setup { display: grid; gap: 14px; padding: 15px; border: 1px solid var(--vitae-border); border-radius: 8px; background: var(--vitae-surface-soft); }
+.org-v2-setup.enabled { border-color: #80bcb3; background: #f2faf8; }
+.org-v2-toggle { display: flex; align-items: flex-start; gap: 11px; cursor: pointer; }
+.org-v2-toggle input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--vitae-accent); }
+.org-v2-toggle span { display: grid; gap: 3px; }
+.org-v2-toggle strong { color: var(--vitae-brand-strong); font-size: .82rem; }
+.org-v2-toggle small,
+.org-v2-fields label small { color: var(--vitae-muted); font-size: .68rem; line-height: 1.4; }
+.org-v2-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding-top: 13px; border-top: 1px solid #badbd6; }
 .org-quick-submit { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 17px; border-top: 1px solid var(--vitae-border); }
 .org-quick-submit p { color: var(--vitae-muted); font-size: .72rem; }
 .org-quick-submit button { min-width: 220px; min-height: 48px; }
@@ -4763,6 +4772,7 @@ a:focus-visible {
   .org-stepper b { font-size: .72rem; }
   .org-form-grid,
   .org-quick-grid,
+  .org-v2-fields,
   .org-detail-grid,
   .org-driver-grid,
   .org-review,

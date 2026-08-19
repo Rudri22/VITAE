@@ -14,6 +14,12 @@ const appState = {
   workspaceTimer: null,
   workspaceRenderPending: false,
   v2Monitoring: { status: "idle", data: null, error: null },
+  v2ShipmentOptions: {
+    status: "idle",
+    productContexts: [],
+    sensors: [],
+    error: null,
+  },
   stopV2MonitoringPoll: null,
 };
 
@@ -162,6 +168,7 @@ async function loadWorkspace() {
     startLivePolling();
   }
   if (appState.user.role === "organization_user") {
+    await loadV2ShipmentOptions();
     const selectedShipmentId = appState.organization?.selectedShipmentId
       || appState.organization?.selectedTrackingId;
     const target = findV2MonitoringTarget(appState.data, selectedShipmentId);
@@ -169,6 +176,31 @@ async function loadWorkspace() {
   }
   renderWorkspace();
   startWorkspacePolling();
+}
+
+async function loadV2ShipmentOptions() {
+  appState.v2ShipmentOptions = {
+    status: "loading",
+    productContexts: [],
+    sensors: [],
+    error: null,
+  };
+  try {
+    const options = await window.VitaeV2ShipmentSetupApi.loadCreationOptions();
+    appState.v2ShipmentOptions = {
+      status: "ready",
+      productContexts: options.productContexts,
+      sensors: options.sensors,
+      error: null,
+    };
+  } catch (error) {
+    appState.v2ShipmentOptions = {
+      status: "error",
+      productContexts: [],
+      sensors: [],
+      error: error.message || "V2 setup options are unavailable.",
+    };
+  }
 }
 
 function handleBootFailure(error) {
@@ -191,6 +223,13 @@ async function handleRoleClick(event) {
   if (pageButton) {
     appState.page = pageButton.dataset.rolePage;
     renderWorkspace();
+    if (
+      appState.user?.role === "organization_user"
+      && appState.page === "create"
+    ) {
+      await loadV2ShipmentOptions();
+      renderWorkspace();
+    }
     return;
   }
 
@@ -258,6 +297,7 @@ function organizationActions() {
       appState.data = await window.VitaeAuth.api("/api/organization/dashboard");
       renderWorkspace();
     },
+    reloadV2Options: loadV2ShipmentOptions,
     refreshLive: refreshLiveShipments,
     selectV2Target: selectV2MonitoringShipment,
     openMap,
