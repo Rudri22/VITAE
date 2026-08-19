@@ -3333,6 +3333,10 @@ a:focus-visible {
 .driver-action-alerts summary { min-height: 42px; display: flex; align-items: center; color: var(--vitae-accent); cursor: pointer; font-size: .7rem; font-weight: 800; }
 .driver-action-alerts details > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .driver-action-alerts details button { min-height: 44px; padding: 5px 8px; border: 1px solid var(--vitae-border); background: #fff; color: var(--vitae-brand-strong); font-size: .68rem; font-weight: 750; }
+.driver-action-alerts dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.driver-action-alerts dt { color: var(--vitae-muted); font-size: .6rem; font-weight: 750; }
+.driver-action-alerts dd { margin: 2px 0 0; font-size: .7rem; font-weight: 750; }
+.driver-action-alerts .v2-alert-command-form { grid-template-columns: 1fr; }
 .driver-support-list { display: grid; gap: 8px; }
 .driver-support-list details { border: 1px solid var(--vitae-border); border-radius: 8px; }
 .driver-support-list summary { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; cursor: pointer; }
@@ -4733,6 +4737,12 @@ a:focus-visible {
 .org-driver-grid header span { display: block; margin-top: 3px; color: var(--vitae-muted); font-size: .7rem; }
 .org-alert-list article > p { margin: 10px 0; color: var(--vitae-muted); font-size: .78rem; }
 .org-row-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.org-row-actions > details { min-width: min(240px, 100%); }
+.org-row-actions > details summary { min-height: 34px; display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--vitae-border); border-radius: 6px; background: var(--vitae-surface-soft); color: var(--vitae-brand-strong); cursor: pointer; font-size: .72rem; font-weight: 750; }
+.v2-alert-command-form { display: grid; grid-template-columns: minmax(140px, 1fr) auto; gap: 8px; align-items: end; margin-top: 8px; padding: 10px; border: 1px solid var(--vitae-border); border-radius: 7px; background: var(--vitae-surface-soft); }
+.v2-alert-command-form label { display: grid; gap: 5px; color: var(--vitae-muted); font-size: .68rem; font-weight: 750; }
+.v2-alert-command-form input { width: 100%; min-width: 0; }
+.v2-alert-command-form button { min-height: 38px; padding: 0 10px; }
 .org-driver-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .org-expanded { grid-column: 1 / -1; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--vitae-border); }
 .org-report-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }

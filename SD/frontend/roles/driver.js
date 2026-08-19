@@ -20,7 +20,7 @@
     if (page === "home") return home(state.data, local);
     if (page === "deliveries") return deliveriesPage(state.data, local);
     if (page === "trip") return activeTripPage(state.data, local);
-    if (page === "alerts") return alertsPage(state.data);
+    if (page === "alerts") return alertsPage(state);
     if (page === "support") return supportPage(state.data, local);
     return profilePage(state.data);
   }
@@ -85,9 +85,32 @@
     return `<form class="driver-mobile-form" data-driver-form="incident"><label><span>Problem category *</span><select name="category" required><option value="">Select problem</option>${options(categories, local.incidentCategory)}</select></label><label><span>Short description *</span><textarea name="description" rows="3" required maxlength="400"></textarea></label><label><span>Current shipment</span><input value="${esc(item.shipmentId)}" readonly><input name="shipmentId" value="${esc(item.shipmentId)}" type="hidden"></label><label><span>Current location</span><input name="location" value="${esc(item.currentLocation)}"></label><button class="driver-primary-action" type="submit">Report Incident</button></form>`;
   }
 
-  function alertsPage(data) {
+  function alertsPage(state) {
+    const data = state.data || {};
     const contact = data.driver?.organizationContact || "";
-    return `<section class="driver-section"><div class="driver-action-alerts">${(data.alerts || []).length ? (data.alerts || []).map((item) => `<article class="${item.severity === "critical" ? "critical" : "warning"}"><header><div><span>${human(item.type)}</span><strong>${esc(item.shipmentId)}</strong></div>${window.VitaeUI.badge(item.severity)}</header><p><strong>${esc(item.message)}</strong> ${esc(item.instruction)}</p><small>Updated ${shortDate(item.updatedAt)}</small><button class="driver-alert-primary" data-driver-action="alert-response" data-response="action_completed" data-id="${esc(item.alertId)}" type="button">Action Completed</button><details><summary>More actions</summary><div><button data-driver-action="alert-response" data-response="problem_continues" data-id="${esc(item.alertId)}" type="button">Problem Continues</button><button data-driver-action="alert-response" data-response="contact_organization" data-contact="${esc(contact)}" data-id="${esc(item.alertId)}" type="button">Contact Organization</button><button data-driver-action="alert-support" data-shipment="${esc(item.shipmentId)}" type="button">Request Support</button><button data-driver-action="alert-sensor" data-id="${esc(item.alertId)}" data-shipment="${esc(item.shipmentId)}" type="button">Report Sensor Issue</button></div></details></article>`).join("") : empty("No alerts require action.")}</div></section>`;
+    const mappedShipmentIds = new Set(
+      allDeliveries(data)
+        .filter((shipment) => shipment.lotTripId)
+        .map((shipment) => shipment.shipmentId),
+    );
+    const legacyAlerts = (data.alerts || []).filter(
+      (alert) => !mappedShipmentIds.has(alert.shipmentId),
+    );
+    const v2 = state.v2Alerts || { status: "idle", alerts: [] };
+    return `${driverV2Alerts(v2)}<section class="driver-section"><header><div><span class="foundation-eyebrow">Legacy shipments</span><h2>Legacy Alerts</h2></div></header><div class="driver-action-alerts">${legacyAlerts.length ? legacyAlerts.map((item) => `<article class="${item.severity === "critical" ? "critical" : "warning"}"><header><div><span>${human(item.type)}</span><strong>${esc(item.shipmentId)}</strong></div>${window.VitaeUI.badge(item.severity)}</header><p><strong>${esc(item.message)}</strong> ${esc(item.instruction)}</p><small>Updated ${shortDate(item.updatedAt)}</small><button class="driver-alert-primary" data-driver-action="alert-response" data-response="action_completed" data-id="${esc(item.alertId)}" type="button">Action Completed</button><details><summary>More actions</summary><div><button data-driver-action="alert-response" data-response="problem_continues" data-id="${esc(item.alertId)}" type="button">Problem Continues</button><button data-driver-action="alert-response" data-response="contact_organization" data-contact="${esc(contact)}" data-id="${esc(item.alertId)}" type="button">Contact Organization</button><button data-driver-action="alert-support" data-shipment="${esc(item.shipmentId)}" type="button">Request Support</button><button data-driver-action="alert-sensor" data-id="${esc(item.alertId)}" data-shipment="${esc(item.shipmentId)}" type="button">Report Sensor Issue</button></div></details></article>`).join("") : empty("No legacy alerts require action.")}</div></section>`;
+  }
+
+  function driverV2Alerts(v2) {
+    let content;
+    if (v2.status === "error") content = `<p role="alert">${esc(v2.error || "V2 alerts are unavailable.")}</p>`;
+    else if (v2.status === "loading" || v2.status === "idle") content = empty("Loading V2 alerts.");
+    else content = v2.alerts.length ? v2.alerts.map(driverV2AlertCard).join("") : empty("No V2 alert history for assigned shipments.");
+    return `<section class="driver-section"><header><div><span class="foundation-eyebrow">Deterministic pipeline</span><h2>V2 Alerts</h2></div></header><div class="driver-action-alerts">${content}</div></section>`;
+  }
+
+  function driverV2AlertCard(item) {
+    const resolved = item.status === "RESOLVED";
+    return `<article class="${item.severity === "CRITICAL" ? "critical" : "warning"}" data-v2-alert-id="${esc(item.alertId)}"><header><div><span>${human(item.alertType)}</span><strong>${esc(item.shipmentId)}</strong></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.severity)}${window.VitaeUI.badge(item.status)}</div></header><p><strong>${esc(item.message)}</strong> ${esc(item.recommendedAction)}</p><dl>${detail("Product condition at detection", human(item.sourceStatus))}${detail("Last update", shortDate(item.updatedAt))}${detail("Recorded actions", String(item.actions?.length || 0))}</dl>${resolved ? `<small>Resolved by Organization · retained in history</small>` : `${item.status === "OPEN" ? `<button class="driver-alert-primary" data-driver-action="v2-alert-ack" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}" type="button">Acknowledge</button>` : ""}<details><summary>Record action</summary><form class="v2-alert-command-form" data-driver-form="v2-alert-action" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Action taken</span><input name="description" required maxlength="300"></label><button type="submit">Save action</button></form></details>`}</article>`;
   }
 
   function supportPage(data, local) {
@@ -122,6 +145,7 @@
     if (action === "alert-support") { local.supportShipmentId = button.dataset.shipment; local.supportIssueType = "temperature_alert"; state.page = "support"; actions.render(); return true; }
     if (action === "alert-sensor") return perform(async () => { await api(`/api/driver/alerts/${id}`, "PATCH", { action: "sensor_issue" }); local.incidentOpen = true; local.incidentCategory = "sensor_problem"; state.page = "trip"; await actions.reload(); actions.notify("Sensor issue recorded. Add incident details below."); }, actions);
     if (action === "alert-response") return perform(async () => { await api(`/api/driver/alerts/${id}`, "PATCH", { action: button.dataset.response }); await actions.reload(); actions.notify("Alert response recorded."); if (button.dataset.response === "contact_organization" && button.dataset.contact) window.location.href = `mailto:${button.dataset.contact}`; }, actions);
+    if (action === "v2-alert-ack") return perform(async () => { await actions.v2AlertCommand(button.dataset.lotTripId, id, "acknowledge"); actions.notify("V2 alert acknowledged."); }, actions);
     return true;
   }
 
@@ -133,6 +157,7 @@
     if (form.dataset.driverForm === "complete") { const payload = Object.fromEntries(new FormData(form).entries()); payload.confirmedArrival = payload.confirmedArrival === "true"; if (!payload.receiverSignature) { actions.notify("Ask the receiver to sign inside the signature box.", "error"); return true; } if (!confirm("Confirm this destination handoff and submit it for organization review?")) return true; return perform(async () => { await api(`/api/driver/shipments/${form.dataset.id}/complete`, "PATCH", payload); local.completionOpen = false; local.completionSuccess = form.dataset.id; local.activeShipmentId = null; state.page = "home"; await actions.reload(); actions.notify("Destination handoff confirmed successfully."); }, actions); }
     if (form.dataset.driverForm === "incident") return perform(async () => { await api("/api/driver/incidents", "POST", Object.fromEntries(new FormData(form).entries())); local.incidentOpen = false; local.incidentCategory = ""; form.reset(); await actions.reload(); actions.notify("Incident reported to operations."); }, actions);
     if (form.dataset.driverForm === "support") return perform(async () => { await api("/api/driver/support", "POST", Object.fromEntries(new FormData(form).entries())); local.supportShipmentId = ""; local.supportIssueType = ""; form.reset(); await actions.reload(); actions.notify("Help request sent to Support."); }, actions);
+    if (form.dataset.driverForm === "v2-alert-action") { const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "action", payload); actions.notify("V2 alert action recorded."); }, actions); }
     return false;
   }
 

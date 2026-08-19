@@ -14,6 +14,7 @@ const appState = {
   workspaceTimer: null,
   workspaceRenderPending: false,
   v2Monitoring: { status: "idle", data: null, error: null },
+  v2Alerts: { status: "idle", alerts: [], error: null },
   v2ShipmentOptions: {
     status: "idle",
     productContexts: [],
@@ -174,6 +175,9 @@ async function loadWorkspace() {
     const target = findV2MonitoringTarget(appState.data, selectedShipmentId);
     await setV2MonitoringTarget(target, false);
   }
+  if (["organization_user", "driver"].includes(appState.user.role)) {
+    await refreshV2Alerts(false);
+  }
   renderWorkspace();
   startWorkspacePolling();
 }
@@ -229,6 +233,12 @@ async function handleRoleClick(event) {
     ) {
       await loadV2ShipmentOptions();
       renderWorkspace();
+    }
+    if (
+      ["organization_user", "driver"].includes(appState.user?.role)
+      && appState.page === "alerts"
+    ) {
+      await refreshV2Alerts();
     }
     return;
   }
@@ -299,6 +309,7 @@ function organizationActions() {
     },
     reloadV2Options: loadV2ShipmentOptions,
     refreshLive: refreshLiveShipments,
+    v2AlertCommand: runV2AlertCommand,
     selectV2Target: selectV2MonitoringShipment,
     openMap,
     notify: showToast,
@@ -315,6 +326,7 @@ function driverActions() {
     openMap,
     openPickupMap: (shipment) => openDriverRoute(shipment, "pickup"),
     openDeliveryMap: (shipment) => openDriverRoute(shipment, "delivery"),
+    v2AlertCommand: runV2AlertCommand,
     notify: showToast,
   };
 }
@@ -381,6 +393,13 @@ async function refreshWorkspaceData() {
       appState.data = nextData;
       appState.workspaceRenderPending = true;
     }
+    if (
+      appState.page === "alerts"
+      && ["organization_user", "driver"].includes(appState.user.role)
+    ) {
+      await refreshV2Alerts(false);
+      appState.workspaceRenderPending = true;
+    }
     const activeElement = document.activeElement;
     const editing = activeElement && activeElement.matches("input, textarea, select, [contenteditable='true']");
     const protectedWorkflow = isProtectedWorkflow();
@@ -391,6 +410,87 @@ async function refreshWorkspaceData() {
   } catch (error) {
     if (![401, 403].includes(error.status)) return;
   }
+}
+
+async function refreshV2Alerts(render = true) {
+  const shipments = v2AlertShipments();
+  if (!shipments.length) {
+    appState.v2Alerts = { status: "ready", alerts: [], error: null };
+    if (render && appState.page === "alerts") renderWorkspace();
+    return;
+  }
+  appState.v2Alerts = { ...appState.v2Alerts, status: "loading", error: null };
+  try {
+    const responses = await Promise.all(
+      shipments.map(async (shipment) => ({
+        shipment,
+        payload: await window.VitaeV2AlertApi.listAlerts(shipment.lotTripId),
+      })),
+    );
+    appState.v2Alerts = {
+      status: "ready",
+      alerts: responses.flatMap(({ shipment, payload }) =>
+        (payload.alerts || []).map((alert) => ({
+          ...alert,
+          shipmentId: shipment.shipmentId,
+          lotTripId: shipment.lotTripId,
+          v2: true,
+        }))),
+      error: null,
+    };
+  } catch (error) {
+    appState.v2Alerts = {
+      ...appState.v2Alerts,
+      status: "error",
+      error: error.message || "V2 alerts are temporarily unavailable.",
+    };
+  }
+  if (render && appState.page === "alerts") renderWorkspace();
+}
+
+function v2AlertShipments() {
+  const data = appState.data || {};
+  const candidates = appState.user?.role === "organization_user"
+    ? data.shipments || []
+    : [
+        ...(data.deliveryRequests || []),
+        ...(data.acceptedDeliveries || []),
+        ...(data.activeDeliveries || []),
+        ...(data.completedDeliveries || []),
+      ];
+  const byLotTrip = new Map();
+  candidates.forEach((shipment) => {
+    if (shipment?.lotTripId) byLotTrip.set(shipment.lotTripId, shipment);
+  });
+  return [...byLotTrip.values()];
+}
+
+async function runV2AlertCommand(lotTripId, alertId, command, payload = {}) {
+  if (command === "acknowledge") {
+    await window.VitaeV2AlertApi.acknowledge(lotTripId, alertId);
+  } else if (command === "action") {
+    await window.VitaeV2AlertApi.recordAction(
+      lotTripId,
+      alertId,
+      payload.description,
+    );
+  } else if (command === "resolve") {
+    await window.VitaeV2AlertApi.resolve(
+      lotTripId,
+      alertId,
+      payload.resolutionNote,
+    );
+  } else {
+    throw new Error("Unsupported V2 alert command.");
+  }
+  await refreshV2Alerts(false);
+  if (
+    appState.user?.role === "organization_user"
+    && appState.v2Monitoring.lotTripId === lotTripId
+  ) {
+    await refreshV2Monitoring(false);
+  }
+  renderWorkspace();
 }
 
 function isProtectedWorkflow() {

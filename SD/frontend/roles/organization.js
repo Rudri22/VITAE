@@ -245,8 +245,29 @@
   }
 
   function alertsPage(state) {
-    const items = state.data.alerts || [];
-    return `<section class="foundation-panel"><div class="org-alert-list">${items.length ? items.map((item) => `<article><header><div><strong>${esc(item.type)}</strong><span>${esc(item.shipmentId)} · ${dateTime(item.detectedAt)}</span></div>${window.VitaeUI.badge(item.severity)}</header><p>${esc(item.explanation)}</p><dl>${detail("Recommended action", item.recommendedAction)}${detail("Status", human(item.status))}${detail("Driver response", item.driverResponse)}${detail("Last update", dateTime(item.updatedAt))}</dl><div class="org-row-actions">${alertActions(item)}</div></article>`).join("") : window.VitaeUI.empty("No alerts for this organization.")}</div></section>`;
+    const mappedShipmentIds = new Set(
+      (state.data.shipments || [])
+        .filter((shipment) => shipment.lotTripId)
+        .map((shipment) => shipment.shipmentId),
+    );
+    const legacyItems = (state.data.alerts || []).filter(
+      (alert) => !mappedShipmentIds.has(alert.shipmentId),
+    );
+    const v2 = state.v2Alerts || { status: "idle", alerts: [] };
+    return `${v2AlertSection(v2)}<section class="foundation-panel"><header><div><span class="foundation-eyebrow">Legacy shipments</span><h2>Legacy Alerts</h2></div></header><div class="org-alert-list">${legacyItems.length ? legacyItems.map((item) => `<article><header><div><strong>${esc(item.type)}</strong><span>${esc(item.shipmentId)} · ${dateTime(item.detectedAt)}</span></div>${window.VitaeUI.badge(item.severity)}</header><p>${esc(item.explanation)}</p><dl>${detail("Recommended action", item.recommendedAction)}${detail("Status", human(item.status))}${detail("Driver response", item.driverResponse)}${detail("Last update", dateTime(item.updatedAt))}</dl><div class="org-row-actions">${alertActions(item)}</div></article>`).join("") : window.VitaeUI.empty("No legacy alerts for this organization.")}</div></section>`;
+  }
+
+  function v2AlertSection(v2) {
+    let content;
+    if (v2.status === "error") content = `<p class="org-inline-error" role="alert">${esc(v2.error || "V2 alerts are unavailable.")}</p>`;
+    else if (v2.status === "loading" || v2.status === "idle") content = window.VitaeUI.empty("Loading V2 alerts.");
+    else content = v2.alerts.length ? v2.alerts.map(v2AlertCard).join("") : window.VitaeUI.empty("No V2 alert history for monitored shipments.");
+    return `<section class="foundation-panel"><header><div><span class="foundation-eyebrow">Deterministic pipeline</span><h2>V2 Alerts</h2></div></header><div class="org-alert-list">${content}</div></section>`;
+  }
+
+  function v2AlertCard(item) {
+    const resolved = item.status === "RESOLVED";
+    return `<article data-v2-alert-id="${esc(item.alertId)}"><header><div><strong>${esc(human(item.alertType))}</strong><span>${esc(item.shipmentId)} · ${dateTime(item.detectedAt)}</span></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.severity)}${window.VitaeUI.badge(item.status)}</div></header><p>${esc(item.message)}</p><dl>${detail("Product condition at detection", human(item.sourceStatus))}${detail("Reason", human(item.reasonCode))}${detail("Recommended action", item.recommendedAction)}${detail("Recorded actions", item.actions?.length || 0)}${detail("Last update", dateTime(item.updatedAt))}</dl>${resolved ? `<span class="org-action-complete">Resolved · retained in history</span>` : `<div class="org-row-actions">${item.status === "OPEN" ? `<button data-org-action="v2-alert-ack" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}" type="button">Acknowledge</button>` : ""}<details><summary>Record action</summary><form class="v2-alert-command-form" data-org-form="v2-alert-action" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Action taken</span><input name="description" required maxlength="300"></label><button type="submit">Save action</button></form></details><details><summary>Resolve</summary><form class="v2-alert-command-form" data-org-form="v2-alert-resolve" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Resolution note</span><input name="resolutionNote" required maxlength="300"></label><button type="submit">Resolve alert</button></form></details></div>`}</article>`;
   }
 
   function driversPage(state, org) {
@@ -284,6 +305,7 @@
     if (["map", "map-live"].includes(action)) { actions.openMap(findShipment(state, id)); return true; }
     if (action === "alert-notify") return perform(async () => { await api(`/api/organization/alerts/${id}`, "PATCH", { status: "acknowledged", driverResponse: "Driver notified by organization operations." }); await actions.reload(); actions.notify("Driver notification recorded."); }, actions);
     if (action === "alert-update") return perform(async () => { const status = button.dataset.status; if (status === "escalated" && !confirm("Escalate this alert to Support and create a linked ticket?")) return; await api(`/api/organization/alerts/${id}`, "PATCH", { status }); await actions.reload(); actions.notify(status === "escalated" ? "Alert escalated and linked to Support." : `Alert marked ${human(status).toLowerCase()}.`); }, actions);
+    if (action === "v2-alert-ack") return perform(async () => { await actions.v2AlertCommand(button.dataset.lotTripId, id, "acknowledge"); actions.notify("V2 alert acknowledged."); }, actions);
     if (action === "driver-availability") return perform(async () => { await api(`/api/organization/drivers/${id}`, "PATCH", { status: button.dataset.status }); await actions.reload(); actions.notify("Driver availability updated."); }, actions);
     return true;
   }
@@ -336,6 +358,8 @@
     if (form.dataset.orgForm === "verify") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); if (!confirm(`Confirm final decision: ${payload.decision}?`)) return true; return perform(async () => { await api(`/api/organization/shipments/${form.dataset.id}/verification`, "PATCH", payload); org.selectedShipmentId = null; await actions.reload(); actions.notify("Delivery verification recorded."); }, actions); }
     if (form.dataset.orgForm === "ticket") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { const result = await api("/api/organization/tickets", "POST", payload); org.selectedTicketId = result.ticket.ticketId; await actions.reload(); actions.notify("Support ticket created."); }, actions); }
     if (form.dataset.orgForm === "ticket-reply") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await api(`/api/organization/tickets/${form.dataset.id}/messages`, "POST", payload); await actions.reload(); actions.notify("Public reply sent to Support."); }, actions); }
+    if (form.dataset.orgForm === "v2-alert-action") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "action", payload); actions.notify("V2 alert action recorded."); }, actions); }
+    if (form.dataset.orgForm === "v2-alert-resolve") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "resolve", payload); actions.notify("V2 alert resolved."); }, actions); }
     return false;
   }
 
