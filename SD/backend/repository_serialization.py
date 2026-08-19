@@ -5,12 +5,26 @@ from typing import Any, Mapping, Optional
 
 try:
     from .alerting import Alert, AlertAction, AlertSeverity, AlertStatus, AlertType
+    from .decision_outbox import (
+        AlertOutboxEvent,
+        OutboxDeliveryStatus,
+        StatusDecisionRecord,
+        validate_alert_outbox_event,
+        validate_status_decision_record,
+    )
     from .risk_rules import ApplicationStatus
     from .state_repository import LiveState, TelemetryRecord
     from .shipment_access import ShipmentAccess
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
     from alerting import Alert, AlertAction, AlertSeverity, AlertStatus, AlertType
+    from decision_outbox import (
+        AlertOutboxEvent,
+        OutboxDeliveryStatus,
+        StatusDecisionRecord,
+        validate_alert_outbox_event,
+        validate_status_decision_record,
+    )
     from risk_rules import ApplicationStatus
     from state_repository import LiveState, TelemetryRecord
     from shipment_access import ShipmentAccess
@@ -192,6 +206,200 @@ def deserialize_live_state(payload: Mapping[str, Any]) -> LiveState:
     )
 
 
+def serialize_status_decision_record(
+    value: StatusDecisionRecord,
+) -> dict[str, Any]:
+    validate_status_decision_record(value)
+    return _document(
+        "vitae.status_decision_record",
+        {
+            "decision_id": value.decision_id,
+            "trip_id": value.trip_id,
+            "lot_trip_id": value.lot_trip_id,
+            "device_id": value.device_id,
+            "sample_id": value.sample_id,
+            "sample_timestamp": _serialize_datetime(
+                value.sample_timestamp, "sample_timestamp"
+            ),
+            "product_id": value.product_id,
+            "product_rule_version": value.product_rule_version,
+            "engine_version": value.engine_version,
+            "previous_live_state_revision": (
+                None
+                if value.previous_live_state_revision is None
+                else _positive_integer(
+                    value.previous_live_state_revision,
+                    "previous_live_state_revision",
+                )
+            ),
+            "resulting_live_state_revision": _positive_integer(
+                value.resulting_live_state_revision,
+                "resulting_live_state_revision",
+            ),
+            "status": _enum_value(value.status, ApplicationStatus, "status"),
+            "reason_code": value.reason_code,
+            "active_rule_id": _optional_text_value(
+                value.active_rule_id, "active_rule_id"
+            ),
+            "excursion_started_at": _optional_datetime(
+                value.excursion_started_at, "excursion_started_at"
+            ),
+            "excursion_episode_duration_minutes": _number(
+                value.excursion_episode_duration_minutes,
+                "excursion_episode_duration_minutes",
+            ),
+            "cumulative_excursion_duration_minutes": _number(
+                value.cumulative_excursion_duration_minutes,
+                "cumulative_excursion_duration_minutes",
+            ),
+            "excursion_utilization": _optional_number(
+                value.excursion_utilization, "excursion_utilization"
+            ),
+        },
+    )
+
+
+def deserialize_status_decision_record(
+    payload: Mapping[str, Any],
+) -> StatusDecisionRecord:
+    fields = _fields(
+        payload,
+        "vitae.status_decision_record",
+        _STATUS_DECISION_RECORD_FIELDS,
+    )
+    previous_revision = fields["previous_live_state_revision"]
+    if previous_revision is not None:
+        previous_revision = _positive_integer(
+            previous_revision, "previous_live_state_revision"
+        )
+    value = StatusDecisionRecord(
+        decision_id=_text(fields, "decision_id"),
+        trip_id=_text(fields, "trip_id"),
+        lot_trip_id=_text(fields, "lot_trip_id"),
+        device_id=_text(fields, "device_id"),
+        sample_id=_text(fields, "sample_id"),
+        sample_timestamp=_deserialize_datetime(
+            fields["sample_timestamp"], "sample_timestamp"
+        ),
+        product_id=_text(fields, "product_id"),
+        product_rule_version=_text(fields, "product_rule_version"),
+        engine_version=_text(fields, "engine_version"),
+        previous_live_state_revision=previous_revision,
+        resulting_live_state_revision=_positive_integer(
+            fields["resulting_live_state_revision"],
+            "resulting_live_state_revision",
+        ),
+        status=_enum(fields["status"], ApplicationStatus, "status"),
+        reason_code=_text(fields, "reason_code"),
+        active_rule_id=_optional_text_value(
+            fields["active_rule_id"], "active_rule_id"
+        ),
+        excursion_started_at=_deserialize_optional_datetime(
+            fields["excursion_started_at"], "excursion_started_at"
+        ),
+        excursion_episode_duration_minutes=_number(
+            fields["excursion_episode_duration_minutes"],
+            "excursion_episode_duration_minutes",
+        ),
+        cumulative_excursion_duration_minutes=_number(
+            fields["cumulative_excursion_duration_minutes"],
+            "cumulative_excursion_duration_minutes",
+        ),
+        excursion_utilization=_optional_number(
+            fields["excursion_utilization"], "excursion_utilization"
+        ),
+    )
+    validate_status_decision_record(value)
+    return value
+
+
+def serialize_alert_outbox_event(value: AlertOutboxEvent) -> dict[str, Any]:
+    validate_alert_outbox_event(value)
+    return _document(
+        "vitae.alert_outbox_event",
+        {
+            "event_id": value.event_id,
+            "decision_id": value.decision_id,
+            "trip_id": value.trip_id,
+            "lot_trip_id": value.lot_trip_id,
+            "device_id": value.device_id,
+            "sample_id": value.sample_id,
+            "event_type": value.event_type,
+            "alert_policy_version": value.alert_policy_version,
+            "alert_candidate": serialize_alert(value.alert_candidate),
+            "created_at": _serialize_datetime(value.created_at, "created_at"),
+            "delivery_status": _enum_value(
+                value.delivery_status,
+                OutboxDeliveryStatus,
+                "delivery_status",
+            ),
+            "attempt_count": _non_negative_integer(
+                value.attempt_count, "attempt_count"
+            ),
+            "available_at": _serialize_datetime(
+                value.available_at, "available_at"
+            ),
+            "lease_owner": _optional_text_value(
+                value.lease_owner, "lease_owner"
+            ),
+            "lease_expires_at": _optional_datetime(
+                value.lease_expires_at, "lease_expires_at"
+            ),
+            "delivered_at": _optional_datetime(
+                value.delivered_at, "delivered_at"
+            ),
+            "last_error_code": _optional_text_value(
+                value.last_error_code, "last_error_code"
+            ),
+        },
+    )
+
+
+def deserialize_alert_outbox_event(
+    payload: Mapping[str, Any],
+) -> AlertOutboxEvent:
+    fields = _fields(
+        payload,
+        "vitae.alert_outbox_event",
+        _ALERT_OUTBOX_EVENT_FIELDS,
+    )
+    value = AlertOutboxEvent(
+        event_id=_text(fields, "event_id"),
+        decision_id=_text(fields, "decision_id"),
+        trip_id=_text(fields, "trip_id"),
+        lot_trip_id=_text(fields, "lot_trip_id"),
+        device_id=_text(fields, "device_id"),
+        sample_id=_text(fields, "sample_id"),
+        event_type=_text(fields, "event_type"),
+        alert_policy_version=_text(fields, "alert_policy_version"),
+        alert_candidate=deserialize_alert(fields["alert_candidate"]),
+        created_at=_deserialize_datetime(fields["created_at"], "created_at"),
+        delivery_status=_enum(
+            fields["delivery_status"],
+            OutboxDeliveryStatus,
+            "delivery_status",
+        ),
+        attempt_count=_non_negative_integer(
+            fields["attempt_count"], "attempt_count"
+        ),
+        available_at=_deserialize_datetime(
+            fields["available_at"], "available_at"
+        ),
+        lease_owner=_optional_text_value(fields["lease_owner"], "lease_owner"),
+        lease_expires_at=_deserialize_optional_datetime(
+            fields["lease_expires_at"], "lease_expires_at"
+        ),
+        delivered_at=_deserialize_optional_datetime(
+            fields["delivered_at"], "delivered_at"
+        ),
+        last_error_code=_optional_text_value(
+            fields["last_error_code"], "last_error_code"
+        ),
+    )
+    validate_alert_outbox_event(value)
+    return value
+
+
 def serialize_alert_action(value: AlertAction) -> dict[str, Any]:
     return _document(
         "vitae.alert_action",
@@ -278,6 +486,8 @@ _ASSIGNMENT_FIELDS = frozenset(("assignment_id", "device_id", "trip_id", "lot_tr
 _SHIPMENT_ACCESS_FIELDS = frozenset(("shipment_id", "lot_trip_id", "organization_id", "driver_id"))
 _TELEMETRY_FIELDS = frozenset(("trip_id", "lot_trip_id", "sample_id", "device_id", "timestamp", "temperature", "battery_level", "latitude", "longitude", "device_health"))
 _LIVE_STATE_FIELDS = frozenset(("lot_trip_id", "trip_id", "device_id", "product_id", "product_rule_version", "status", "reason_code", "active_rule_id", "last_sample_id", "last_sample_timestamp", "latest_temperature", "last_updated", "excursion_started_at", "excursion_episode_duration_minutes", "cumulative_excursion_duration_minutes", "excursion_utilization", "revision"))
+_STATUS_DECISION_RECORD_FIELDS = frozenset(("decision_id", "trip_id", "lot_trip_id", "device_id", "sample_id", "sample_timestamp", "product_id", "product_rule_version", "engine_version", "previous_live_state_revision", "resulting_live_state_revision", "status", "reason_code", "active_rule_id", "excursion_started_at", "excursion_episode_duration_minutes", "cumulative_excursion_duration_minutes", "excursion_utilization"))
+_ALERT_OUTBOX_EVENT_FIELDS = frozenset(("event_id", "decision_id", "trip_id", "lot_trip_id", "device_id", "sample_id", "event_type", "alert_policy_version", "alert_candidate", "created_at", "delivery_status", "attempt_count", "available_at", "lease_owner", "lease_expires_at", "delivered_at", "last_error_code"))
 _ALERT_ACTION_FIELDS = frozenset(("action_id", "description", "actor_id", "recorded_at"))
 _ALERT_FIELDS = frozenset(("alert_id", "alert_type", "severity", "status", "trip_id", "lot_trip_id", "device_id", "sample_id", "source_status", "reason_code", "active_rule_id", "message", "recommended_action", "detected_at", "updated_at", "acknowledged_by", "acknowledged_at", "actions", "resolved_by", "resolved_at", "resolution_note"))
 
@@ -335,6 +545,14 @@ def _optional_number(value, field: str) -> Optional[float]:
 def _positive_integer(value, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise RepositorySerializationError(f"{field} must be a positive integer")
+    return value
+
+
+def _non_negative_integer(value, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RepositorySerializationError(
+            f"{field} must be a non-negative integer"
+        )
     return value
 
 

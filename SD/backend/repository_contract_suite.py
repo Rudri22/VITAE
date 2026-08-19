@@ -14,6 +14,17 @@ try:
         AlertType,
     )
     from .risk_rules import ApplicationStatus, StatusDecision
+    from .decision_outbox import (
+        AlertOutboxEvent,
+        DecisionOutboxError,
+        OutboxClaimError,
+        OutboxDeliveryStatus,
+        OutboxTransitionError,
+        ProcessingBundleRepository,
+        StatusDecisionRecord,
+        alert_outbox_event_from_candidate,
+        decision_id_for,
+    )
     from .state_repository import (
         ConcurrentStateUpdateError,
         DuplicateTelemetrySampleError,
@@ -42,6 +53,17 @@ except ImportError:
         AlertType,
     )
     from risk_rules import ApplicationStatus, StatusDecision
+    from decision_outbox import (
+        AlertOutboxEvent,
+        DecisionOutboxError,
+        OutboxClaimError,
+        OutboxDeliveryStatus,
+        OutboxTransitionError,
+        ProcessingBundleRepository,
+        StatusDecisionRecord,
+        alert_outbox_event_from_candidate,
+        decision_id_for,
+    )
     from state_repository import (
         ConcurrentStateUpdateError,
         DuplicateTelemetrySampleError,
@@ -155,6 +177,59 @@ def contract_alert(**changes):
         detected_at=CONTRACT_TIME,
         updated_at=CONTRACT_TIME,
     )
+    return replace(value, **changes)
+
+
+def contract_decision_record(sample=None, state=None, **changes):
+    sample = sample or contract_sample()
+    state = state or contract_state(sample)
+    value = StatusDecisionRecord(
+        decision_id=decision_id_for(
+            state.lot_trip_id,
+            state.device_id,
+            sample.sample_id,
+        ),
+        trip_id=state.trip_id,
+        lot_trip_id=state.lot_trip_id,
+        device_id=state.device_id,
+        sample_id=sample.sample_id,
+        sample_timestamp=sample.timestamp,
+        product_id=state.product_id,
+        product_rule_version=state.product_rule_version,
+        engine_version="deterministic-status-v1",
+        previous_live_state_revision=(
+            None if state.revision == 1 else state.revision - 1
+        ),
+        resulting_live_state_revision=state.revision,
+        status=state.status,
+        reason_code=state.reason_code,
+        active_rule_id=state.active_rule_id,
+        excursion_started_at=state.excursion_started_at,
+        excursion_episode_duration_minutes=(
+            state.excursion_episode_duration_minutes
+        ),
+        cumulative_excursion_duration_minutes=(
+            state.cumulative_excursion_duration_minutes
+        ),
+        excursion_utilization=state.excursion_utilization,
+    )
+    return replace(value, **changes)
+
+
+def contract_alert_outbox_event(decision=None, **changes):
+    decision = decision or contract_decision_record()
+    alert = contract_alert(
+        trip_id=decision.trip_id,
+        lot_trip_id=decision.lot_trip_id,
+        device_id=decision.device_id,
+        sample_id=decision.sample_id,
+        source_status=decision.status,
+        reason_code=decision.reason_code,
+        active_rule_id=decision.active_rule_id,
+        detected_at=decision.sample_timestamp,
+        updated_at=decision.sample_timestamp,
+    )
+    value = alert_outbox_event_from_candidate(decision, alert)
     return replace(value, **changes)
 
 
@@ -494,6 +569,209 @@ class TelemetryStateRepositoryContractMixin:
             (self.record,),
         )
 
+
+class ProcessingBundleRepositoryContractMixin:
+    """Reusable decision/outbox behavior for atomic processing repositories."""
+
+    def make_processing_bundle_repository(self):
+        raise NotImplementedError
+
+    def setUp(self):
+        super().setUp()
+        self.repository = self.make_processing_bundle_repository()
+        self.sample = contract_sample()
+        self.record = telemetry_record_from_sample(
+            "contract-trip", "contract-lot-trip", self.sample
+        )
+        self.state = contract_state(self.sample)
+        self.decision = contract_decision_record(self.sample, self.state)
+
+    def commit_bundle(self, outbox_event=None):
+        self.repository.commit_processing_bundle(
+            self.record,
+            self.state,
+            self.decision,
+            outbox_event,
+            expected_revision=None,
+        )
+
+    def commit_first(self):
+        self.repository.commit_sample_and_state(
+            self.record, self.state, expected_revision=None
+        )
+
+    def test_contract_runtime_protocol(self):
+        self.assertIsInstance(self.repository, ProcessingBundleRepository)
+
+    def test_contract_no_alert_bundle_is_atomic(self):
+        self.commit_bundle()
+        self.assertEqual(
+            self.repository.get_telemetry_history("contract-lot-trip"),
+            (self.record,),
+        )
+        self.assertEqual(
+            self.repository.get_live_state("contract-lot-trip"), self.state
+        )
+        self.assertEqual(
+            self.repository.get_decision(self.decision.decision_id),
+            self.decision,
+        )
+        self.assertEqual(
+            self.repository.list_dispatchable_outbox_events(CONTRACT_TIME), ()
+        )
+
+    def test_contract_alert_bundle_stores_exact_candidate(self):
+        event = contract_alert_outbox_event(self.decision)
+        self.commit_bundle(event)
+        stored = self.repository.get_outbox_event(event.event_id)
+        self.assertEqual(stored, event)
+        self.assertIs(stored.alert_candidate, event.alert_candidate)
+
+    def test_contract_decision_history_preserves_acceptance_order(self):
+        self.commit_bundle()
+        sample2 = contract_sample(sample_id="contract-sample-2", minutes=5)
+        record2 = telemetry_record_from_sample(
+            "contract-trip", "contract-lot-trip", sample2
+        )
+        state2 = contract_state(sample2, self.state)
+        decision2 = contract_decision_record(sample2, state2)
+        self.repository.commit_processing_bundle(
+            record2,
+            state2,
+            decision2,
+            None,
+            expected_revision=1,
+        )
+        self.assertEqual(
+            self.repository.get_decision_history("contract-lot-trip"),
+            (self.decision, decision2),
+        )
+
+    def test_contract_invalid_decision_leaves_bundle_unchanged(self):
+        invalid = replace(self.decision, trip_id="wrong-trip")
+        with self.assertRaises(DecisionOutboxError):
+            self.repository.commit_processing_bundle(
+                self.record,
+                self.state,
+                invalid,
+                None,
+                expected_revision=None,
+            )
+        self.assertFalse(
+            self.repository.has_sample(self.record.device_id, self.record.sample_id)
+        )
+        self.assertIsNone(self.repository.get_live_state("contract-lot-trip"))
+        self.assertEqual(
+            self.repository.get_decision_history("contract-lot-trip"), ()
+        )
+
+    def test_contract_concurrent_claim_has_one_winner(self):
+        event = contract_alert_outbox_event(self.decision)
+        self.commit_bundle(event)
+        barrier = Barrier(2)
+
+        def claim(worker):
+            barrier.wait()
+            try:
+                self.repository.claim_outbox_event(
+                    event.event_id,
+                    worker_id=worker,
+                    claimed_at=CONTRACT_TIME,
+                    lease_duration=timedelta(minutes=5),
+                )
+                return "claimed"
+            except OutboxClaimError:
+                return "rejected"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(claim, ("worker-a", "worker-b")))
+        self.assertCountEqual(outcomes, ("claimed", "rejected"))
+        self.assertEqual(
+            self.repository.get_outbox_event(event.event_id).attempt_count, 1
+        )
+
+    def test_contract_release_and_retry_increment_attempts_on_claim_only(self):
+        event = contract_alert_outbox_event(self.decision)
+        self.commit_bundle(event)
+        first = self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-a",
+            claimed_at=CONTRACT_TIME,
+            lease_duration=timedelta(minutes=5),
+        )
+        pending = self.repository.release_outbox_event(
+            event.event_id,
+            worker_id="worker-a",
+            released_at=CONTRACT_TIME + timedelta(minutes=1),
+            retry_at=CONTRACT_TIME + timedelta(minutes=2),
+            error_code="ALERT_STORE_UNAVAILABLE",
+        )
+        self.assertEqual(first.attempt_count, 1)
+        self.assertEqual(pending.attempt_count, 1)
+        self.assertEqual(pending.delivery_status, OutboxDeliveryStatus.PENDING)
+        second = self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-b",
+            claimed_at=CONTRACT_TIME + timedelta(minutes=2),
+            lease_duration=timedelta(minutes=5),
+        )
+        self.assertEqual(second.attempt_count, 2)
+
+    def test_contract_expired_lease_can_be_reclaimed(self):
+        event = contract_alert_outbox_event(self.decision)
+        self.commit_bundle(event)
+        self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-a",
+            claimed_at=CONTRACT_TIME,
+            lease_duration=timedelta(minutes=1),
+        )
+        as_of = CONTRACT_TIME + timedelta(minutes=1)
+        self.assertEqual(
+            self.repository.list_dispatchable_outbox_events(as_of)[0].event_id,
+            event.event_id,
+        )
+        reclaimed = self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-b",
+            claimed_at=as_of,
+            lease_duration=timedelta(minutes=1),
+        )
+        self.assertEqual(reclaimed.lease_owner, "worker-b")
+        self.assertEqual(reclaimed.attempt_count, 2)
+
+    def test_contract_delivery_is_terminal(self):
+        event = contract_alert_outbox_event(self.decision)
+        self.commit_bundle(event)
+        self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-a",
+            claimed_at=CONTRACT_TIME,
+            lease_duration=timedelta(minutes=5),
+        )
+        delivered = self.repository.mark_outbox_delivered(
+            event.event_id,
+            worker_id="worker-a",
+            delivered_at=CONTRACT_TIME + timedelta(minutes=1),
+        )
+        self.assertEqual(delivered.delivery_status, OutboxDeliveryStatus.DELIVERED)
+        self.assertEqual(delivered.attempt_count, 1)
+        self.assertEqual(
+            self.repository.list_dispatchable_outbox_events(
+                CONTRACT_TIME + timedelta(hours=1)
+            ),
+            (),
+        )
+        with self.assertRaises(OutboxClaimError):
+            self.repository.claim_outbox_event(
+                event.event_id,
+                worker_id="worker-b",
+                claimed_at=CONTRACT_TIME + timedelta(hours=1),
+                lease_duration=timedelta(minutes=1),
+            )
+        self.assertEqual(
+            self.repository.get_live_state("contract-lot-trip"), self.state
+        )
 
 class AlertRepositoryContractMixin:
     """Reusable behavior suite for every AlertRepository adapter."""

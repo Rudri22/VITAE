@@ -9,7 +9,9 @@ try:
     from .repository_contract_suite import (
         CONTRACT_TIME,
         contract_alert,
+        contract_alert_outbox_event,
         contract_assignment,
+        contract_decision_record,
         contract_sample,
         contract_shipment_access,
         contract_state,
@@ -17,19 +19,23 @@ try:
     )
     from .repository_serialization import (
         RepositorySerializationError,
+        deserialize_alert_outbox_event,
         deserialize_alert,
         deserialize_alert_action,
         deserialize_device_assignment,
         deserialize_live_state,
         deserialize_shipment_access,
         deserialize_telemetry_record,
+        deserialize_status_decision_record,
         deserialize_trip_identity,
         serialize_alert,
+        serialize_alert_outbox_event,
         serialize_alert_action,
         serialize_device_assignment,
         serialize_live_state,
         serialize_shipment_access,
         serialize_telemetry_record,
+        serialize_status_decision_record,
         serialize_trip_identity,
     )
     from .state_repository import telemetry_record_from_sample
@@ -38,7 +44,9 @@ except ImportError:
     from repository_contract_suite import (
         CONTRACT_TIME,
         contract_alert,
+        contract_alert_outbox_event,
         contract_assignment,
+        contract_decision_record,
         contract_sample,
         contract_shipment_access,
         contract_state,
@@ -46,19 +54,23 @@ except ImportError:
     )
     from repository_serialization import (
         RepositorySerializationError,
+        deserialize_alert_outbox_event,
         deserialize_alert,
         deserialize_alert_action,
         deserialize_device_assignment,
         deserialize_live_state,
         deserialize_shipment_access,
         deserialize_telemetry_record,
+        deserialize_status_decision_record,
         deserialize_trip_identity,
         serialize_alert,
+        serialize_alert_outbox_event,
         serialize_alert_action,
         serialize_device_assignment,
         serialize_live_state,
         serialize_shipment_access,
         serialize_telemetry_record,
+        serialize_status_decision_record,
         serialize_trip_identity,
     )
     from state_repository import telemetry_record_from_sample
@@ -117,6 +129,23 @@ class RepositorySerializationTests(unittest.TestCase):
             excursion_state,
         )
 
+    def test_status_decision_record_round_trip(self):
+        decision = contract_decision_record()
+        self.assertEqual(
+            deserialize_status_decision_record(
+                serialize_status_decision_record(decision)
+            ),
+            decision,
+        )
+
+    def test_alert_outbox_event_round_trip_preserves_exact_candidate(self):
+        event = contract_alert_outbox_event()
+        restored = deserialize_alert_outbox_event(
+            serialize_alert_outbox_event(event)
+        )
+        self.assertEqual(restored, event)
+        self.assertEqual(restored.alert_candidate, event.alert_candidate)
+
     def test_alert_action_round_trip(self):
         repository = InMemoryAlertRepository()
         alert = repository.save_alert(contract_alert())
@@ -160,6 +189,8 @@ class RepositorySerializationTests(unittest.TestCase):
             serialize_shipment_access(contract_shipment_access()),
             serialize_telemetry_record(self.record),
             serialize_live_state(self.state),
+            serialize_status_decision_record(contract_decision_record()),
+            serialize_alert_outbox_event(contract_alert_outbox_event()),
             serialize_alert(contract_alert()),
         )
         for document in documents:

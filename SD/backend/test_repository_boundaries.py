@@ -4,6 +4,7 @@ import unittest
 try:
     from . import (
         alert_lifecycle_service,
+        decision_outbox,
         monitoring_service,
         operational_service,
         repository_contract_suite,
@@ -15,6 +16,10 @@ try:
         telemetry_processor,
     )
     from .alerting import AlertRepository, InMemoryAlertRepository
+    from .decision_outbox import (
+        InMemoryProcessingBundleRepository,
+        ProcessingBundleRepository,
+    )
     from .state_repository import (
         IdentityRepository,
         InMemoryTelemetryStateRepository,
@@ -22,6 +27,7 @@ try:
     )
 except ImportError:
     import alert_lifecycle_service
+    import decision_outbox
     import monitoring_service
     import operational_service
     import repository_contract_suite
@@ -32,6 +38,10 @@ except ImportError:
     import shipment_registration
     import telemetry_processor
     from alerting import AlertRepository, InMemoryAlertRepository
+    from decision_outbox import (
+        InMemoryProcessingBundleRepository,
+        ProcessingBundleRepository,
+    )
     from state_repository import (
         IdentityRepository,
         InMemoryTelemetryStateRepository,
@@ -46,6 +56,9 @@ class RepositoryBoundaryTests(unittest.TestCase):
         self.assertIsInstance(state_repository, IdentityRepository)
         self.assertIsInstance(state_repository, TelemetryStateRepository)
         self.assertIsInstance(InMemoryAlertRepository(), AlertRepository)
+        self.assertIsInstance(
+            InMemoryProcessingBundleRepository(), ProcessingBundleRepository
+        )
         self.assertIsInstance(
             shipment_access.InMemoryShipmentAccessRepository(),
             shipment_access.ShipmentAccessRepository,
@@ -91,6 +104,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
         for module in (
             repository_contract_suite,
             repository_serialization,
+            decision_outbox,
             shipment_access,
             sqlite_identity_repository,
         ):

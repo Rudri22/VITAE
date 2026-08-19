@@ -2,9 +2,11 @@ import unittest
 
 try:
     from .alerting import InMemoryAlertRepository
+    from .decision_outbox import InMemoryProcessingBundleRepository
     from .repository_contract_suite import (
         AlertRepositoryContractMixin,
         IdentityRepositoryContractMixin,
+        ProcessingBundleRepositoryContractMixin,
         ShipmentAccessRepositoryContractMixin,
         TelemetryStateRepositoryContractMixin,
     )
@@ -12,9 +14,11 @@ try:
     from .state_repository import InMemoryTelemetryStateRepository
 except ImportError:
     from alerting import InMemoryAlertRepository
+    from decision_outbox import InMemoryProcessingBundleRepository
     from repository_contract_suite import (
         AlertRepositoryContractMixin,
         IdentityRepositoryContractMixin,
+        ProcessingBundleRepositoryContractMixin,
         ShipmentAccessRepositoryContractMixin,
         TelemetryStateRepositoryContractMixin,
     )
@@ -36,6 +40,22 @@ class InMemoryTelemetryStateRepositoryContractTests(
 ):
     def make_telemetry_state_repository(self):
         return InMemoryTelemetryStateRepository()
+
+
+class InMemoryProcessingBundleRepositoryContractTests(
+    ProcessingBundleRepositoryContractMixin,
+    unittest.TestCase,
+):
+    def make_processing_bundle_repository(self):
+        return InMemoryProcessingBundleRepository()
+
+
+class InMemoryProcessingBundleTelemetryContractTests(
+    TelemetryStateRepositoryContractMixin,
+    unittest.TestCase,
+):
+    def make_telemetry_state_repository(self):
+        return InMemoryProcessingBundleRepository()
 
 
 class InMemoryShipmentAccessRepositoryContractTests(
