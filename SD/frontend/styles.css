@@ -4801,7 +4801,7 @@ a:focus-visible {
 .org-v2-monitor { padding: 15px; }
 .org-v2-monitor > header { align-items: flex-start; margin-bottom: 12px; }
 .org-v2-monitor > header p { margin: 4px 0 0; color: var(--vitae-muted); font-size: .78rem; }
-.org-v2-monitor > dl { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--vitae-border); }
+.org-v2-monitor > dl { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--vitae-border); }
 .org-v2-monitor > dl > div { min-width: 0; padding: 12px 14px 2px 0; }
 .org-v2-monitor dt { color: var(--vitae-muted); font-size: .66rem; font-weight: 700; text-transform: uppercase; }
 .org-v2-monitor dd { margin: 6px 0 0; color: var(--vitae-ink); font-size: .86rem; font-weight: 700; overflow-wrap: anywhere; }

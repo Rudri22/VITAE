@@ -50,7 +50,7 @@
         ${cockpitMetric("Arriving Today", arrivingToday, "Expected before day end")}
         ${cockpitMetric("Available Drivers", summary.availableDrivers || 0, "Ready for assignment")}
       </section>
-      ${v2MonitoringCard(state.v2Monitoring)}
+      ${v2MonitoringCard(state)}
       <div class="org-cockpit-workspace">
         <section class="foundation-panel org-live-board"><header><div><span class="foundation-eyebrow">Current network</span><h2>Live Shipments</h2></div><button class="foundation-link" data-role-page="tracking" type="button">Open Live Tracking</button></header>
           ${live.length ? `<div class="org-live-rows">${live.map(liveShipmentRow).join("")}</div>` : window.VitaeUI.empty("No active shipments are currently moving.")}
@@ -60,7 +60,12 @@
       </div>`;
   }
 
-  function v2MonitoringCard(monitoring) {
+  function v2MonitoringCard(state) {
+    const monitoring = state.v2Monitoring;
+    if (!monitoring || monitoring.status === "not_mapped") return "";
+    const shipment = (state.data.shipments || []).find(
+      (item) => item.shipmentId === monitoring.shipmentId,
+    );
     if (!monitoring || monitoring.status === "idle" || monitoring.status === "loading") {
       return `<section class="foundation-panel org-v2-monitor" aria-busy="true"><header><div><span class="foundation-eyebrow">Prototype lot</span><h2>VITAE Live Monitoring - v2</h2></div></header>${window.VitaeUI.empty("Loading live monitoring state.")}</section>`;
     }
@@ -77,9 +82,10 @@
     const statusLabel = live?.status || "Waiting for telemetry";
     const alertSummary = alert ? `${human(alert.alertType)} · ${human(alert.severity)}` : "No active alert";
     return `<section class="foundation-panel org-v2-monitor" data-v2-monitor-status="${esc(status)}">
-      <header><div><span class="foundation-eyebrow">Prototype lot</span><h2>VITAE Live Monitoring - v2</h2><p>${esc(productName(trip.productId))} · ${esc(trip.origin)} → ${esc(trip.destination)}</p></div>${monitoring.status === "error" ? `<span class="org-v2-monitor-stale">Update unavailable</span>` : ""}</header>
+      <header><div><span class="foundation-eyebrow">${esc(shipment?.shipmentId || trip.lotTripId)}</span><h2>VITAE Live Monitoring - v2</h2><p>${esc(productName(trip.productId))} · ${esc(trip.origin)} → ${esc(trip.destination)}</p></div>${monitoring.status === "error" ? `<span class="org-v2-monitor-stale">Update unavailable</span>` : ""}</header>
       <dl>
-        ${monitoringDetail("Current status", window.VitaeUI.badge(statusLabel, statusTone(status)), true)}
+        ${monitoringDetail("Shipment lifecycle", shipment ? window.VitaeUI.badge(shipment.status) : "Unavailable", Boolean(shipment))}
+        ${monitoringDetail("Product condition", window.VitaeUI.badge(statusLabel, statusTone(status)), true)}
         ${monitoringDetail("Latest temperature", formatTemperature(live?.latestTemperature))}
         ${monitoringDetail("Excursion used", formatUtilization(live?.excursionUtilization))}
         ${monitoringDetail("Latest alert", alertSummary)}
@@ -237,9 +243,9 @@
     if (!button) return false;
     const org = orgState(state), action = button.dataset.orgAction, id = button.dataset.id;
     if (action === "back-step") { org.step = Math.max(1, org.step - 1); org.formError = ""; actions.render(); return true; }
-    if (action === "shipment-detail") { org.selectedShipmentId = id; state.page = "shipments"; actions.render(); return true; }
-    if (action === "close-detail") { org.selectedShipmentId = null; actions.render(); return true; }
-    if (action === "select-tracking") { org.selectedTrackingId = id; actions.render(); return true; }
+    if (action === "shipment-detail") { org.selectedShipmentId = id; org.selectedTrackingId = null; state.page = "shipments"; await actions.selectV2Target(id); actions.render(); return true; }
+    if (action === "close-detail") { org.selectedShipmentId = null; await actions.selectV2Target(null); actions.render(); return true; }
+    if (action === "select-tracking") { org.selectedTrackingId = id; org.selectedShipmentId = null; await actions.selectV2Target(id); actions.render(); return true; }
     if (action === "driver-detail") { org.selectedDriverId = org.selectedDriverId === id ? null : id; actions.render(); return true; }
     if (action === "ticket-detail") { org.selectedTicketId = id; actions.render(); return true; }
     if (["map", "map-live"].includes(action)) { actions.openMap(findShipment(state, id)); return true; }

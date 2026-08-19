@@ -190,9 +190,55 @@ SHIPMENTS = {
     },
 }
 
-# Start the focused local demo without operational records. The Organization
-# creates the first delivery request through the normal workflow.
-SHIPMENTS = {}
+# Start the focused local demo with one shipment linked to the v2 prototype.
+# The Organization creates additional delivery requests through the normal workflow.
+SHIPMENTS = {
+    "ship-a-v2-001": {
+        "shipmentId": "ship-a-v2-001",
+        "id": "ship-a-v2-001",
+        "lotTripId": "lot-trip-sim-001",
+        "organizationId": "hospital-a",
+        "origin": "Beirut Distribution Center",
+        "destination": "AUB Medical Center",
+        "destinationHospitalId": "hospital-a",
+        "destinationHospitalName": "AUB Medical Center",
+        "productName": "GARDASIL 9",
+        "medicineType": "GARDASIL 9",
+        "productCategory": "Vaccines",
+        "quantity": 24,
+        "unit": "doses",
+        "safeTemperatureMin": 2,
+        "safeTemperatureMax": 8,
+        "status": "in_transit",
+        "riskLevel": "low",
+        "riskClassification": "safe",
+        "currentLocation": "Beirut Distribution Center",
+        "routeProgress": 15,
+        "driverId": "driver-aya",
+        "vehicleId": "van-12",
+        "containerId": "container-v2-001",
+        "sensorId": "device-sim-001",
+        "temperature": None,
+        "batteryLevel": None,
+        "coolingUnitStatus": "normal",
+        "lastUpdated": "2026-08-19T00:00:00Z",
+        "departureAt": "2026-08-19T00:00:00Z",
+        "expectedArrival": "2026-08-19T22:00:00Z",
+        "readings": [],
+        "alerts": [],
+        "risk": {
+            "score": 0,
+            "level": "low",
+            "reasons": ["Awaiting authoritative v2 telemetry"],
+        },
+        "timeline": [
+            {
+                "timestamp": "2026-08-19T00:00:00Z",
+                "label": "Prototype shipment entered transit",
+            }
+        ],
+    }
+}
 
 ORGANIZATIONS = {
     "hospital-a": {
@@ -1635,6 +1681,7 @@ def shipment_monitor_record(shipment):
     return {
         "id": shipment.get("id") or shipment.get("shipmentId"),
         "shipmentId": shipment.get("shipmentId"),
+        "lotTripId": shipment.get("lotTripId"),
         "origin": shipment.get("origin") or "Origin not assigned",
         "originGps": origin_gps,
         "destinationHospitalId": destination_id,

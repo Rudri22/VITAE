@@ -162,9 +162,10 @@ async function loadWorkspace() {
     startLivePolling();
   }
   if (appState.user.role === "organization_user") {
-    appState.v2Monitoring = { status: "loading", data: null, error: null };
-    await refreshV2Monitoring(false);
-    startV2MonitoringPolling();
+    const selectedShipmentId = appState.organization?.selectedShipmentId
+      || appState.organization?.selectedTrackingId;
+    const target = findV2MonitoringTarget(appState.data, selectedShipmentId);
+    await setV2MonitoringTarget(target, false);
   }
   renderWorkspace();
   startWorkspacePolling();
@@ -258,6 +259,7 @@ function organizationActions() {
       renderWorkspace();
     },
     refreshLive: refreshLiveShipments,
+    selectV2Target: selectV2MonitoringShipment,
     openMap,
     notify: showToast,
   };
@@ -370,9 +372,12 @@ function stopWorkspacePolling() {
 
 async function refreshV2Monitoring(render = true) {
   if (appState.user?.role !== "organization_user") return;
+  const lotTripId = appState.v2Monitoring.lotTripId;
+  if (!lotTripId) return;
   try {
-    const data = await window.VitaeV2MonitoringApi.fetchLive("lot-trip-sim-001");
+    const data = await window.VitaeV2MonitoringApi.fetchLive(lotTripId);
     appState.v2Monitoring = {
+      ...appState.v2Monitoring,
       status: "ready",
       data,
       error: null,
@@ -391,11 +396,14 @@ async function refreshV2Monitoring(render = true) {
 
 function startV2MonitoringPolling() {
   stopV2MonitoringPolling();
+  const lotTripId = appState.v2Monitoring.lotTripId;
+  if (!lotTripId) return;
   appState.stopV2MonitoringPoll = window.VitaeV2MonitoringApi.startPolling(
-    "lot-trip-sim-001",
+    lotTripId,
     {
       onData: (data) => {
         appState.v2Monitoring = {
+          ...appState.v2Monitoring,
           status: "ready",
           data,
           error: null,
@@ -419,6 +427,52 @@ function startV2MonitoringPolling() {
 function stopV2MonitoringPolling() {
   if (appState.stopV2MonitoringPoll) appState.stopV2MonitoringPoll();
   appState.stopV2MonitoringPoll = null;
+}
+
+function findV2MonitoringTarget(data, selectedShipmentId = null) {
+  const shipments = data?.shipments || [];
+  if (selectedShipmentId) {
+    const selected = shipments.find(
+      (shipment) => shipment.shipmentId === selectedShipmentId,
+    );
+    return selected?.lotTripId ? selected : null;
+  }
+  const mapped = shipments.filter((shipment) => shipment.lotTripId);
+  return mapped.length === 1 ? mapped[0] : null;
+}
+
+async function selectV2MonitoringShipment(shipmentId) {
+  const target = findV2MonitoringTarget(appState.data, shipmentId);
+  await setV2MonitoringTarget(target, false);
+}
+
+async function setV2MonitoringTarget(target, render = true) {
+  if (!target) {
+    stopV2MonitoringPolling();
+    appState.v2Monitoring = { status: "not_mapped", data: null, error: null };
+    if (render && appState.page === "dashboard") renderWorkspace();
+    return;
+  }
+
+  if (appState.v2Monitoring.lotTripId === target.lotTripId) {
+    if (!appState.stopV2MonitoringPoll) {
+      await refreshV2Monitoring(false);
+      startV2MonitoringPolling();
+    }
+    return;
+  }
+
+  stopV2MonitoringPolling();
+  appState.v2Monitoring = {
+    status: "loading",
+    data: null,
+    error: null,
+    lotTripId: target.lotTripId,
+    shipmentId: target.shipmentId,
+  };
+  await refreshV2Monitoring(false);
+  startV2MonitoringPolling();
+  if (render && appState.page === "dashboard") renderWorkspace();
 }
 
 function openMap(shipment) {
