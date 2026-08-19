@@ -136,6 +136,10 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
 .envrc
 .venv
 env/
@@ -143,6 +147,26 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Credentials and private keys
+.aws/
+aws_credentials
+credentials*.json
+secrets*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Local infrastructure state can contain credentials
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!.terraform.tfvars.example
 
 # Spyder project settings
 .spyderproject
