@@ -2717,6 +2717,9 @@ def driver_shipment_record(shipment):
     organization = ORGANIZATIONS.get(shipment.get("organizationId")) or {}
     return {
         "shipmentId": shipment.get("shipmentId"),
+        "lotTripId": shipment.get("lotTripId"),
+        "tripId": shipment.get("tripId"),
+        "tripStatus": shipment.get("tripStatus"),
         "productCategory": shipment.get("productCategory") or shipment.get("medicineType") or "Cold-chain goods",
         "pickup": shipment.get("origin") or "Pickup not assigned",
         "pickupGps": shipment.get("originGps"),
@@ -2782,7 +2785,13 @@ def get_driver_support_tickets(driver_id):
     return [organization_ticket_record(item) for item in SUPPORT_TICKETS.values() if item.get("driverId") == driver_id]
 
 
-def start_driver_delivery(driver_id, shipment_id, payload, user):
+def start_driver_delivery(
+    driver_id,
+    shipment_id,
+    payload,
+    user,
+    v2_lifecycle_service=None,
+):
     shipment = _driver_shipment(driver_id, shipment_id)
     if shipment.get("status") not in DRIVER_ACCEPTED_STATUSES:
         raise ValueError("Accept the delivery request before starting the trip")
@@ -2790,14 +2799,50 @@ def start_driver_delivery(driver_id, shipment_id, payload, user):
     required = ["shipmentCollected", "containerClosed", "sensorConnected", "coolingActive", "vehicleReady"]
     if not all(checks.get(item) is True for item in required):
         raise ValueError("Complete every pre-trip check before starting the delivery")
+    transition = None
+    if shipment.get("lotTripId"):
+        if v2_lifecycle_service is None:
+            raise ValueError("V2 shipment lifecycle service is unavailable")
+        transition = v2_lifecycle_service.activate_for_shipment(shipment)
+
+    shipment_before = deepcopy(shipment)
+    driver_before = deepcopy(DRIVERS.get(driver_id))
     timestamp = now_iso()
-    shipment["preTripChecklist"] = {**{item: True for item in required}, "confirmedBy": user.get("userId"), "confirmedAt": timestamp}
+    try:
+        _commit_driver_delivery_start(
+            shipment,
+            driver_id,
+            user,
+            required,
+            timestamp,
+            transition,
+        )
+    except Exception:
+        _restore_mapping(shipment, shipment_before)
+        if driver_before is not None:
+            _restore_mapping(DRIVERS[driver_id], driver_before)
+        if transition is not None:
+            v2_lifecycle_service.rollback_activation(shipment_before)
+        raise
+    return driver_shipment_record(shipment)
+
+
+def _commit_driver_delivery_start(
+    shipment,
+    driver_id,
+    user,
+    required_checks,
+    timestamp,
+    transition,
+):
+    shipment["preTripChecklist"] = {**{item: True for item in required_checks}, "confirmedBy": user.get("userId"), "confirmedAt": timestamp}
     shipment["status"] = "in_transit"
+    if transition is not None:
+        shipment["tripStatus"] = transition.trip_identity.status.value
     shipment["lastUpdated"] = timestamp
     shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Delivery started by {user.get('name')}"})
     if driver_id in DRIVERS:
         DRIVERS[driver_id]["status"] = "on_route"
-    return driver_shipment_record(shipment)
 
 
 def accept_driver_delivery(driver_id, shipment_id, user):
@@ -2814,7 +2859,13 @@ def accept_driver_delivery(driver_id, shipment_id, user):
     return driver_shipment_record(shipment)
 
 
-def complete_driver_delivery(driver_id, shipment_id, payload, user):
+def complete_driver_delivery(
+    driver_id,
+    shipment_id,
+    payload,
+    user,
+    v2_lifecycle_service=None,
+):
     shipment = _driver_shipment(driver_id, shipment_id)
     if shipment.get("status") not in DRIVER_ACTIVE_STATUSES:
         raise ValueError("Only an active delivery can be completed")
@@ -2831,7 +2882,46 @@ def complete_driver_delivery(driver_id, shipment_id, payload, user):
     destination_code = str(payload.get("destinationVerificationCode") or "").strip()
     if destination_code != str(shipment.get("destinationVerificationCode") or ""):
         raise ValueError("The destination handoff code is incorrect")
+    transition = None
+    if shipment.get("lotTripId"):
+        if v2_lifecycle_service is None:
+            raise ValueError("V2 shipment lifecycle service is unavailable")
+        transition = v2_lifecycle_service.complete_for_shipment(shipment)
+
+    shipment_before = deepcopy(shipment)
+    driver_before = deepcopy(DRIVERS.get(driver_id))
     timestamp = now_iso()
+    try:
+        _commit_driver_delivery_completion(
+            shipment,
+            driver_id,
+            payload,
+            user,
+            receiver_name,
+            receiver_signature,
+            timestamp,
+            transition,
+        )
+    except Exception:
+        _restore_mapping(shipment, shipment_before)
+        if driver_before is not None:
+            _restore_mapping(DRIVERS[driver_id], driver_before)
+        if transition is not None:
+            v2_lifecycle_service.rollback_completion(shipment_before)
+        raise
+    return driver_shipment_record(shipment)
+
+
+def _commit_driver_delivery_completion(
+    shipment,
+    driver_id,
+    payload,
+    user,
+    receiver_name,
+    receiver_signature,
+    timestamp,
+    transition,
+):
     shipment["receiverName"] = receiver_name
     shipment["receiverSignature"] = receiver_signature
     shipment["destinationVerificationStatus"] = "confirmed"
@@ -2840,14 +2930,21 @@ def complete_driver_delivery(driver_id, shipment_id, payload, user):
     shipment["deliveryNotes"] = str(payload.get("deliveryNotes") or "").strip()
     shipment["arrivalTime"] = timestamp
     shipment["status"] = "awaiting_verification"
+    if transition is not None:
+        shipment["tripStatus"] = transition.trip_identity.status.value
     shipment["lastUpdated"] = timestamp
     shipment.setdefault("driverActions", []).append("Confirmed arrival and receiver")
     shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Destination handoff confirmed by {receiver_name}"})
     shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Delivery completed by {user.get('name')}; awaiting organization verification"})
+    shipment_id = shipment.get("shipmentId")
     remaining_active = [item for item in SHIPMENTS.values() if item.get("driverId") == driver_id and item.get("shipmentId") != shipment_id and item.get("status") in DRIVER_ACTIVE_STATUSES]
     if not remaining_active and driver_id in DRIVERS:
         DRIVERS[driver_id]["status"] = "available"
-    return driver_shipment_record(shipment)
+
+
+def _restore_mapping(target, snapshot):
+    target.clear()
+    target.update(snapshot)
 
 
 def respond_to_driver_alert(driver_id, alert_id, payload, user):

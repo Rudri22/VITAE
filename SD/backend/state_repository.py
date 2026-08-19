@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from threading import RLock
 from typing import Dict, Optional, Protocol, Tuple
@@ -112,6 +112,17 @@ class IdentityRepository(Protocol):
         trip_id: str,
         assignment_id: str,
     ) -> None:
+        ...
+
+    def transition_trip_and_assignment(
+        self,
+        trip_id: str,
+        assignment_id: str,
+        expected_trip_status: TripStatus,
+        next_trip_status: TripStatus,
+        expected_assignment_active: bool,
+        next_assignment_active: bool,
+    ) -> Tuple[TripIdentity, DeviceAssignment]:
         ...
 
     def register_trip(self, trip: TripIdentity) -> None:
@@ -353,6 +364,68 @@ class InMemoryTelemetryStateRepository:
                 del self._assignments_by_device[assignment.device_id]
             del self._trips_by_id[trip.trip_id]
             del self._trips_by_lot_trip_id[trip.lot_trip_id]
+
+    def transition_trip_and_assignment(
+        self,
+        trip_id: str,
+        assignment_id: str,
+        expected_trip_status: TripStatus,
+        next_trip_status: TripStatus,
+        expected_assignment_active: bool,
+        next_assignment_active: bool,
+    ) -> Tuple[TripIdentity, DeviceAssignment]:
+        """Atomically replace one trip status and assignment active flag."""
+        with self._lock:
+            trip = self._trips_by_id.get(trip_id)
+            assignment = self._assignments_by_id.get(assignment_id)
+            if trip is None or assignment is None:
+                raise StateIntegrityError("Trip lifecycle identity does not exist")
+            validate_device_assignment(assignment, trip, assignment.device_id)
+            if (
+                trip.status != expected_trip_status
+                or assignment.active is not expected_assignment_active
+            ):
+                raise StateIntegrityError(
+                    "Trip lifecycle does not match the expected prior state"
+                )
+            if next_assignment_active != (next_trip_status == TripStatus.ACTIVE):
+                raise StateIntegrityError(
+                    "Only an ACTIVE trip may have an active device assignment"
+                )
+            if next_assignment_active and any(
+                existing.active
+                and existing.assignment_id != assignment.assignment_id
+                for existing in self._assignments_by_device.get(
+                    assignment.device_id,
+                    (),
+                )
+            ):
+                raise StateIntegrityError(
+                    "Device already has another active assignment"
+                )
+
+            next_trip = replace(trip, status=next_trip_status)
+            next_assignment = replace(
+                assignment,
+                active=next_assignment_active,
+            )
+            validate_trip_identity(next_trip)
+            validate_device_assignment(
+                next_assignment,
+                next_trip,
+                next_assignment.device_id,
+            )
+            self._trips_by_id[next_trip.trip_id] = next_trip
+            self._trips_by_lot_trip_id[next_trip.lot_trip_id] = next_trip
+            self._assignments_by_id[next_assignment.assignment_id] = next_assignment
+            device_assignments = self._assignments_by_device[next_assignment.device_id]
+            self._assignments_by_device[next_assignment.device_id] = [
+                next_assignment
+                if existing.assignment_id == next_assignment.assignment_id
+                else existing
+                for existing in device_assignments
+            ]
+            return next_trip, next_assignment
 
     def get_trip_by_id(self, trip_id: str) -> Optional[TripIdentity]:
         with self._lock:

@@ -135,6 +135,7 @@ try:
     )
     from .state_repository import InMemoryTelemetryStateRepository
     from .shipment_registration import V2ShipmentRegistrationService
+    from .shipment_lifecycle import V2ShipmentLifecycleService
     from .telemetry_http import (
         TelemetryHttpAdapter,
         serialize_alert,
@@ -155,6 +156,7 @@ except ImportError:
     )
     from state_repository import InMemoryTelemetryStateRepository
     from shipment_registration import V2ShipmentRegistrationService
+    from shipment_lifecycle import V2ShipmentLifecycleService
     from telemetry_http import (
         TelemetryHttpAdapter,
         serialize_alert,
@@ -210,6 +212,9 @@ V2_MONITORING_SERVICE = MonitoringService(
     V2_ALERT_REPOSITORY,
 )
 V2_SHIPMENT_REGISTRATION_SERVICE = V2ShipmentRegistrationService(
+    V2_STATE_REPOSITORY
+)
+V2_SHIPMENT_LIFECYCLE_SERVICE = V2ShipmentLifecycleService(
     V2_STATE_REPOSITORY
 )
 
@@ -313,11 +318,29 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/driver/shipments/") and path.endswith("/start"):
             shipment_id = path.removeprefix("/api/driver/shipments/").removesuffix("/start").strip("/")
-            self.handle_driver_operation(lambda driver, payload, user: start_driver_delivery(driver, shipment_id, payload, user), "delivery")
+            self.handle_driver_operation(
+                lambda driver, payload, user: start_driver_delivery(
+                    driver,
+                    shipment_id,
+                    payload,
+                    user,
+                    V2_SHIPMENT_LIFECYCLE_SERVICE,
+                ),
+                "delivery",
+            )
             return
         if path.startswith("/api/driver/shipments/") and path.endswith("/complete"):
             shipment_id = path.removeprefix("/api/driver/shipments/").removesuffix("/complete").strip("/")
-            self.handle_driver_operation(lambda driver, payload, user: complete_driver_delivery(driver, shipment_id, payload, user), "delivery")
+            self.handle_driver_operation(
+                lambda driver, payload, user: complete_driver_delivery(
+                    driver,
+                    shipment_id,
+                    payload,
+                    user,
+                    V2_SHIPMENT_LIFECYCLE_SERVICE,
+                ),
+                "delivery",
+            )
             return
         if path.startswith("/api/driver/alerts/"):
             alert_id = path.removeprefix("/api/driver/alerts/").strip("/")
