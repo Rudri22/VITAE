@@ -541,6 +541,29 @@ def _validate_commit(
         )
 
 
+def validate_telemetry_state_commit(
+    *,
+    record: TelemetryRecord,
+    new_state: LiveState,
+    current_state: Optional[LiveState],
+    expected_revision: Optional[int],
+    sample_exists: bool = False,
+) -> None:
+    """Validate a repository commit using the shared domain invariants."""
+    _validate_record(record)
+    _validate_live_state(new_state)
+    sample_identities = (
+        {(record.device_id, record.sample_id)} if sample_exists else set()
+    )
+    _validate_commit(
+        record=record,
+        new_state=new_state,
+        current_state=current_state,
+        expected_revision=expected_revision,
+        sample_identities=sample_identities,
+    )
+
+
 def _validate_record(record):
     _required_text(record.trip_id, "trip_id")
     _required_text(record.lot_trip_id, "lot_trip_id")
