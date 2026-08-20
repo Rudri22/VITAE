@@ -83,16 +83,78 @@
     const alertSummary = alert ? `${human(alert.alertType)} · ${human(alert.severity)}` : "No active alert";
     return `<section class="foundation-panel org-v2-monitor" data-v2-monitor-status="${esc(status)}">
       <header><div><span class="foundation-eyebrow">${esc(shipment?.shipmentId || trip.lotTripId)}</span><h2>VITAE Live Monitoring - v2</h2><p>${esc(productName(trip.productId))} · ${esc(trip.origin)} → ${esc(trip.destination)}</p></div>${monitoring.status === "error" ? `<span class="org-v2-monitor-stale">Update unavailable</span>` : ""}</header>
-      <dl>
+      <div class="org-monitor-signal-grid">
+        <article class="org-monitor-signal org-monitor-current" aria-labelledby="org-current-status-title">
+          <h3 id="org-current-status-title">Current status</h3>
+          <div class="org-monitor-current-value">${window.VitaeUI.badge(statusLabel, statusTone(status))}</div>
+          <p>Deterministic ProductRules</p>
+        </article>
+        ${futureRiskCard(payload.futureRisk)}
+      </div>
+      <dl class="org-monitor-detail-grid">
         ${monitoringDetail("Delivery workflow", shipment ? window.VitaeUI.badge(shipment.status) : "Unavailable", Boolean(shipment))}
         ${monitoringDetail("V2 trip lifecycle", window.VitaeUI.badge(trip.status), true)}
-        ${monitoringDetail("Product condition", window.VitaeUI.badge(statusLabel, statusTone(status)), true)}
         ${monitoringDetail("Latest temperature", formatTemperature(live?.latestTemperature))}
         ${monitoringDetail("Excursion used", formatUtilization(live?.excursionUtilization))}
         ${monitoringDetail("Latest alert", alertSummary)}
         ${monitoringDetail("Last updated", live?.lastUpdated ? dateTime(live.lastUpdated) : "No telemetry received")}
       </dl>
     </section>`;
+  }
+
+  function futureRiskCard(value) {
+    const unavailable = (message) => `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="NOT_PREDICTED" aria-labelledby="org-future-risk-title">
+      <h3 id="org-future-risk-title">30-min future risk</h3>
+      <strong class="org-future-risk-unavailable">${esc(message)}</strong>
+      <p>Optional engineering forecast</p>
+    </article>`;
+
+    if (!value || value.state === "NOT_CONFIGURED") {
+      return `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="NOT_CONFIGURED" aria-labelledby="org-future-risk-title">
+        <h3 id="org-future-risk-title">30-min future risk</h3>
+        <strong class="org-future-risk-unavailable">Not configured</strong>
+        <p>Optional engineering forecast</p>
+      </article>`;
+    }
+    if (value.state === "NOT_PREDICTED") {
+      return unavailable(futureRiskReason(value.reasonCode));
+    }
+    if (value.state !== "PREDICTED" || !validFutureRiskPrediction(value)) {
+      return unavailable("Forecast unavailable");
+    }
+
+    const percentage = `${(value.adverseEventProbability * 100).toFixed(1)}%`;
+    const simulatorNote = value.trainingSourceKind === "APPROVED_SIMULATOR"
+      ? `<small>Engineering forecast &middot; Trained on simulated VITAE trips<br>Real-device performance not yet validated &middot; No approved risk-band policy</small>`
+      : `<small>Engineering forecast &middot; No approved risk-band policy</small>`;
+    return `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="PREDICTED" aria-labelledby="org-future-risk-title">
+      <h3 id="org-future-risk-title">30-min future risk</h3>
+      <strong class="org-future-risk-probability">${percentage}</strong>
+      <p>Chance of deterministic deterioration in the next ${esc(value.predictionHorizonMinutes)} minutes</p>
+      <footer><time datetime="${esc(value.cutoffAt)}">Data through ${esc(dateTime(value.cutoffAt))}</time>${simulatorNote}</footer>
+    </article>`;
+  }
+
+  function validFutureRiskPrediction(value) {
+    return typeof value.adverseEventProbability === "number"
+      && Number.isFinite(value.adverseEventProbability)
+      && value.adverseEventProbability >= 0
+      && value.adverseEventProbability <= 1
+      && value.predictionHorizonMinutes === 30
+      && typeof value.cutoffAt === "string"
+      && value.cutoffAt.trim() !== ""
+      && !Number.isNaN(new Date(value.cutoffAt).getTime());
+  }
+
+  function futureRiskReason(code) {
+    return ({
+      NO_ACCEPTED_TELEMETRY: "Waiting for telemetry",
+      CURRENT_STATUS_NOT_ELIGIBLE: "Forecast not applicable for current status",
+      TRIP_NOT_ACTIVE: "Forecast unavailable for inactive trip",
+      HISTORY_NOT_COHERENT: "Forecast temporarily unavailable",
+      CONCURRENT_UPDATE: "Updating telemetry - try again shortly",
+      INFERENCE_UNAVAILABLE: "Forecast temporarily unavailable",
+    })[code] || "Forecast unavailable";
   }
 
   function monitoringDetail(label, value, html = false) {

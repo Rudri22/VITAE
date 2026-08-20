@@ -128,7 +128,8 @@ async function main() {
     );
     assert.match(orgHtml, new RegExp(`V2 trip lifecycle[\\s\\S]*${status}`));
     assert.match(orgHtml, /Delivery workflow/);
-    assert.match(orgHtml, /Product condition/);
+    assert.match(orgHtml, /Current status/);
+    assert.match(orgHtml, /Deterministic ProductRules/);
 
     const group = status === "PLANNED" ? "acceptedDeliveries" : status === "ACTIVE" ? "activeDeliveries" : "completedDeliveries";
     const page = status === "ACTIVE" ? "trip" : "deliveries";
