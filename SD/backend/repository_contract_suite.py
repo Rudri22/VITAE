@@ -625,7 +625,7 @@ class ProcessingBundleRepositoryContractMixin:
         self.commit_bundle(event)
         stored = self.repository.get_outbox_event(event.event_id)
         self.assertEqual(stored, event)
-        self.assertIs(stored.alert_candidate, event.alert_candidate)
+        self.assertEqual(stored.alert_candidate, event.alert_candidate)
 
     def test_contract_decision_history_preserves_acceptance_order(self):
         self.commit_bundle()

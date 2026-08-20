@@ -1,3 +1,4 @@
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
@@ -219,7 +220,32 @@ def alert_outbox_event_from_candidate(
 
 
 def decision_id_for(lot_trip_id: str, device_id: str, sample_id: str) -> str:
-    return "decision-" + _identity_hash(lot_trip_id, device_id, sample_id)
+    lot_trip = _required_text(lot_trip_id, "lot_trip_id")
+    encoded_lot_trip = urlsafe_b64encode(lot_trip.encode("utf-8")).decode(
+        "ascii"
+    ).rstrip("=")
+    return (
+        f"decision-{encoded_lot_trip}-"
+        f"{_identity_hash(lot_trip, device_id, sample_id)}"
+    )
+
+
+def lot_trip_id_from_decision_id(decision_id: str) -> str:
+    value = _required_text(decision_id, "decision_id")
+    if not value.startswith("decision-"):
+        raise DecisionOutboxError("decision_id does not contain a lot trip identity")
+    encoded_and_hash = value[len("decision-") :]
+    try:
+        encoded_lot_trip, hash_suffix = encoded_and_hash.rsplit("-", 1)
+        if len(hash_suffix) != 24:
+            raise ValueError
+        padding = "=" * (-len(encoded_lot_trip) % 4)
+        lot_trip_id = urlsafe_b64decode(encoded_lot_trip + padding).decode("utf-8")
+    except (UnicodeDecodeError, ValueError) as error:
+        raise DecisionOutboxError(
+            "decision_id does not contain a valid lot trip identity"
+        ) from error
+    return _required_text(lot_trip_id, "lot_trip_id")
 
 
 def outbox_event_id_for(decision_id: str, alert_id: str) -> str:
@@ -236,6 +262,36 @@ def validate_status_decision_record(value: StatusDecisionRecord) -> None:
 
 def validate_alert_outbox_event(value: AlertOutboxEvent) -> None:
     _validate_outbox_event(value)
+
+
+def validate_processing_bundle_commit(
+    *,
+    record: TelemetryRecord,
+    new_state: LiveState,
+    decision_record: StatusDecisionRecord,
+    alert_outbox_event: Optional[AlertOutboxEvent],
+    current_state: Optional[LiveState],
+    expected_revision: Optional[int],
+    sample_exists: bool,
+) -> None:
+    """Validate the complete transition before any repository writes occur."""
+    validate_telemetry_state_commit(
+        record=record,
+        new_state=new_state,
+        current_state=current_state,
+        expected_revision=expected_revision,
+        sample_exists=sample_exists,
+    )
+    _validate_decision_record(decision_record)
+    _validate_decision_matches_transition(
+        decision_record,
+        record,
+        new_state,
+        current_state,
+    )
+    if alert_outbox_event is not None:
+        _validate_outbox_event(alert_outbox_event)
+        _validate_outbox_matches_decision(alert_outbox_event, decision_record)
 
 
 class InMemoryProcessingBundleRepository(
@@ -260,28 +316,19 @@ class InMemoryProcessingBundleRepository(
     ) -> None:
         with self._lock:
             current_state = self._live_states.get(record.lot_trip_id)
-            validate_telemetry_state_commit(
+            validate_processing_bundle_commit(
                 record=record,
                 new_state=new_state,
+                decision_record=decision_record,
+                alert_outbox_event=alert_outbox_event,
                 current_state=current_state,
                 expected_revision=expected_revision,
                 sample_exists=(record.device_id, record.sample_id)
                 in self._sample_identities,
             )
-            _validate_decision_record(decision_record)
-            _validate_decision_matches_transition(
-                decision_record,
-                record,
-                new_state,
-                current_state,
-            )
             if decision_record.decision_id in self._decisions_by_id:
                 raise DecisionOutboxError("Decision ID is already committed")
             if alert_outbox_event is not None:
-                _validate_outbox_event(alert_outbox_event)
-                _validate_outbox_matches_decision(
-                    alert_outbox_event, decision_record
-                )
                 if alert_outbox_event.event_id in self._outbox_events:
                     raise DecisionOutboxError("Outbox event ID is already committed")
 

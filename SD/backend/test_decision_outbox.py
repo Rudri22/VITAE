@@ -14,6 +14,7 @@ try:
         alert_outbox_event_from_candidate,
         decision_id_for,
         decision_record_from_processing_result,
+        lot_trip_id_from_decision_id,
         outbox_event_id_for,
     )
     from .repository_contract_suite import (
@@ -38,6 +39,7 @@ except ImportError:
         alert_outbox_event_from_candidate,
         decision_id_for,
         decision_record_from_processing_result,
+        lot_trip_id_from_decision_id,
         outbox_event_id_for,
     )
     from repository_contract_suite import (
@@ -71,6 +73,10 @@ class DecisionOutboxModelTests(unittest.TestCase):
             decision_id_for(
                 "other-lot-trip", "contract-device", "contract-sample-1"
             ),
+        )
+        self.assertEqual(
+            lot_trip_id_from_decision_id(decision),
+            "contract-lot-trip",
         )
         event = outbox_event_id_for(decision, "contract-alert")
         self.assertEqual(event, outbox_event_id_for(decision, "contract-alert"))
