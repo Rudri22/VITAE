@@ -404,7 +404,12 @@ class SimulatorTests(unittest.TestCase):
         point = STATUS_LADDER_SCENARIO.points[0]
         self.assertEqual(
             set(point.__dataclass_fields__),
-            {"elapsed_minutes", "temperature", "battery_level"},
+            {
+                "elapsed_minutes",
+                "temperature",
+                "battery_level",
+                "device_health",
+            },
         )
         self.assertFalse(hasattr(point, "status"))
 

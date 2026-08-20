@@ -17,6 +17,7 @@ try:
         sqlite_telemetry_repository,
         shipment_lifecycle,
         shipment_registration,
+        simulated_training_corpus,
         telemetry_processor,
         temporal_risk_examples,
         temporal_risk_baseline,
@@ -57,6 +58,7 @@ except ImportError:
     import sqlite_telemetry_repository
     import shipment_lifecycle
     import shipment_registration
+    import simulated_training_corpus
     import telemetry_processor
     import temporal_risk_examples
     import temporal_risk_baseline
@@ -162,6 +164,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             sqlite_telemetry_repository,
             trip_completion,
             sqlite_trip_completion_repository,
+            simulated_training_corpus,
             temporal_risk_examples,
             temporal_risk_baseline,
         ):

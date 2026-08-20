@@ -42,6 +42,7 @@ class ScenarioPoint:
     elapsed_minutes: float
     temperature: Any
     battery_level: Optional[Any] = None
+    device_health: Optional[Any] = None
 
 
 @dataclass(frozen=True)
@@ -226,6 +227,8 @@ def generate_samples(
         }
         if point.battery_level is not None:
             payload["battery_level"] = point.battery_level
+        if point.device_health is not None:
+            payload["device_health"] = point.device_health
         samples.append(payload)
     return tuple(samples)
 

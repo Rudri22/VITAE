@@ -401,6 +401,18 @@ class TemporalRiskBaselineTrainingTests(unittest.TestCase):
         self.assertIsNone(classifier.class_weight)
         self.assertEqual(classifier.max_iter, 1000)
         self.assertTrue(result.coefficients_by_absolute_magnitude)
+        self.assertTrue(
+            all(
+                "__x" not in item.feature_name
+                for item in result.coefficients_by_absolute_magnitude
+            )
+        )
+        self.assertTrue(
+            any(
+                "current_excursion_utilization" in item.feature_name
+                for item in result.coefficients_by_absolute_magnitude
+            )
+        )
         for metrics in (result.validation_metrics, result.test_metrics):
             self.assertTrue(all(isfinite(value) for value in vars(metrics).values()))
 

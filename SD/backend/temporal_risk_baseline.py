@@ -508,7 +508,9 @@ def train_logistic_regression_baseline(
         model, matrix, labels, split.validation_indices
     )
     test_metrics = _evaluate_model(model, matrix, labels, split.test_indices)
-    names = model.named_steps["preprocessor"].get_feature_names_out()
+    names = model.named_steps["preprocessor"].get_feature_names_out(
+        TEMPORAL_RISK_CATEGORICAL_FEATURES + TEMPORAL_RISK_NUMERIC_FEATURES
+    )
     coefficients = model.named_steps["classifier"].coef_[0]
     summary = tuple(
         sorted(
