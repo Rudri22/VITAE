@@ -16,6 +16,7 @@ try:
     from .dynamo_identity_repository import DynamoIdentityAccessRepository
     from .dynamo_alert_repository import DynamoAlertRepository
     from .dynamo_telemetry_repository import DynamoTelemetryStateRepository
+    from .dynamo_trip_completion_repository import DynamoTripCompletionRepository
     from .monitoring_service import MonitoringService
     from .repository_config import (
         RepositoryConfig,
@@ -50,6 +51,7 @@ try:
     )
     from .state_repository import TelemetryStateRepository
     from .telemetry_processor import TelemetryProcessor
+    from .trip_completion import TripCompletionRepository
 except ImportError:
     from alert_lifecycle_service import (
         AlertActor,
@@ -60,6 +62,7 @@ except ImportError:
     from dynamo_identity_repository import DynamoIdentityAccessRepository
     from dynamo_alert_repository import DynamoAlertRepository
     from dynamo_telemetry_repository import DynamoTelemetryStateRepository
+    from dynamo_trip_completion_repository import DynamoTripCompletionRepository
     from monitoring_service import MonitoringService
     from repository_config import (
         RepositoryConfig,
@@ -94,6 +97,7 @@ except ImportError:
     )
     from state_repository import TelemetryStateRepository
     from telemetry_processor import TelemetryProcessor
+    from trip_completion import TripCompletionRepository
 
 
 class RepositoryConfigTests(unittest.TestCase):
@@ -117,6 +121,10 @@ class RepositoryConfigTests(unittest.TestCase):
         self.assertIs(
             composition.identity_repository,
             composition.telemetry_state_repository,
+        )
+        self.assertIs(
+            composition.identity_repository,
+            composition.trip_completion_repository,
         )
         self.assertFalse(composition.identity_is_persistent)
         self.assertFalse(composition.telemetry_is_persistent)
@@ -195,6 +203,22 @@ class RepositoryConfigTests(unittest.TestCase):
         self.assertIsInstance(
             composition.identity_repository,
             DynamoIdentityAccessRepository,
+        )
+        self.assertIsInstance(
+            composition.trip_completion_repository,
+            DynamoTripCompletionRepository,
+        )
+        self.assertIs(
+            composition.identity_repository,
+            composition.trip_completion_repository,
+        )
+        self.assertIs(
+            composition.telemetry_state_repository,
+            composition.trip_completion_repository.telemetry_repository,
+        )
+        self.assertIsInstance(
+            composition.trip_completion_repository,
+            TripCompletionRepository,
         )
         self.assertIs(
             composition.identity_repository,
@@ -334,7 +358,8 @@ class CompositionServiceContractMixin:
         access = registration.shipment_access
 
         lifecycle = V2ShipmentLifecycleService(
-            repositories.identity_repository
+            repositories.identity_repository,
+            repositories.trip_completion_repository,
         )
         lifecycle.activate_for_shipment(
             {
@@ -537,7 +562,8 @@ class DynamoLocalCompositionServiceTests(
             access,
         )
         V2ShipmentLifecycleService(
-            first.identity_repository
+            first.identity_repository,
+            first.trip_completion_repository,
         ).activate_for_shipment(
             {
                 "tripId": trip.trip_id,
@@ -585,12 +611,29 @@ class DynamoLocalCompositionServiceTests(
         )
         self.assertEqual(acknowledged.status.value, "ACKNOWLEDGED")
         self.assertEqual(len(actioned.actions), 1)
+        completion = V2ShipmentLifecycleService(
+            first.identity_repository,
+            first.trip_completion_repository,
+        ).complete_for_shipment(
+            {
+                "tripId": trip.trip_id,
+                "lotTripId": trip.lot_trip_id,
+                "v2DeviceAssignmentId": assignment.assignment_id,
+            },
+            lifecycle_time + timedelta(minutes=4),
+        )
 
         restarted = compose_repositories(config, dynamodb_client=self.client)
 
         self.assertEqual(
             restarted.telemetry_state_repository.get_live_state(trip.lot_trip_id),
             processing_result.live_state,
+        )
+        self.assertEqual(
+            restarted.trip_completion_repository.get_completed_trip_outcome(
+                trip.lot_trip_id
+            ),
+            completion.outcome,
         )
         self.assertEqual(
             restarted.telemetry_state_repository.get_decision(decision.decision_id),

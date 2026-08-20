@@ -86,6 +86,10 @@ class DynamoTripCompletionRepository(
             key_namespace=key_namespace,
         )
 
+    @property
+    def telemetry_repository(self) -> DynamoTelemetryStateRepository:
+        return self._telemetry_repository
+
     def commit_sample_and_state(self, record, new_state, expected_revision):
         return self._telemetry_repository.commit_sample_and_state(
             record, new_state, expected_revision

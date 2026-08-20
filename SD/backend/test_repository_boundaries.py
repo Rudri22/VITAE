@@ -114,6 +114,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             },
             shipment_lifecycle.V2ShipmentLifecycleService: {
                 "identity_repository": IdentityRepository,
+                "trip_completion_repository": trip_completion.TripCompletionRepository,
             },
             alert_lifecycle_service.AlertLifecycleService: {
                 "alert_repository": AlertRepository,

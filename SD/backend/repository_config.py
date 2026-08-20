@@ -14,6 +14,7 @@ try:
         InMemoryIdentityAccessRepository,
         ShipmentAccessRepository,
     )
+    from .trip_completion import TripCompletionRepository
 except ImportError:
     from alerting import AlertRepository, InMemoryAlertRepository
     from decision_outbox import (
@@ -25,6 +26,7 @@ except ImportError:
         InMemoryIdentityAccessRepository,
         ShipmentAccessRepository,
     )
+    from trip_completion import TripCompletionRepository
 
 
 class RepositoryMode(str, Enum):
@@ -90,6 +92,7 @@ class RepositoryComposition:
     shipment_access_repository: ShipmentAccessRepository
     telemetry_state_repository: ProcessingBundleRepository
     alert_repository: AlertRepository
+    trip_completion_repository: TripCompletionRepository
 
     @property
     def identity_is_persistent(self) -> bool:
@@ -119,6 +122,7 @@ def compose_repositories(
             shipment_access_repository=identity,
             telemetry_state_repository=identity,
             alert_repository=InMemoryAlertRepository(),
+            trip_completion_repository=identity,
         )
     if config.mode != RepositoryMode.DYNAMODB:
         raise RepositoryConfigurationError("Unsupported repository mode")
@@ -134,26 +138,21 @@ def compose_repositories(
         )
     try:
         from .dynamo_alert_repository import DynamoAlertRepository
-        from .dynamo_identity_repository import DynamoIdentityAccessRepository
-        from .dynamo_telemetry_repository import DynamoTelemetryStateRepository
+        from .dynamo_trip_completion_repository import DynamoTripCompletionRepository
     except ImportError:
         from dynamo_alert_repository import DynamoAlertRepository
-        from dynamo_identity_repository import DynamoIdentityAccessRepository
-        from dynamo_telemetry_repository import DynamoTelemetryStateRepository
+        from dynamo_trip_completion_repository import DynamoTripCompletionRepository
     client = dynamodb_client or _build_dynamodb_client(config)
     _require_dynamodb_table(client, config.telemetry_table, "telemetry")
     _require_dynamodb_table(client, config.alert_table, "alert")
-    identity = DynamoIdentityAccessRepository(
+    completion = DynamoTripCompletionRepository(
         client,
         config.identity_table,
-        key_namespace=config.key_namespace,
-    )
-    telemetry = DynamoTelemetryStateRepository(
-        client,
         config.telemetry_table,
-        identity_table_name=config.identity_table,
         key_namespace=config.key_namespace,
     )
+    identity = completion
+    telemetry = completion.telemetry_repository
     alerts = DynamoAlertRepository(
         client,
         config.alert_table,
@@ -165,6 +164,7 @@ def compose_repositories(
         shipment_access_repository=identity,
         telemetry_state_repository=telemetry,
         alert_repository=alerts,
+        trip_completion_repository=completion,
     )
 
 

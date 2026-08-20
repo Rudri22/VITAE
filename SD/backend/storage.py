@@ -2943,6 +2943,9 @@ def complete_driver_delivery(
                 shipment,
                 _parse_datetime(timestamp, "Completion timestamp"),
             )
+            timestamp = transition.trip.completed_at.astimezone(
+                timezone.utc
+            ).isoformat().replace("+00:00", "Z")
         _commit_driver_delivery_completion(
             shipment,
             driver_id,
@@ -2957,8 +2960,6 @@ def complete_driver_delivery(
         _restore_mapping(shipment, shipment_before)
         if driver_before is not None:
             _restore_mapping(DRIVERS[driver_id], driver_before)
-        if transition is not None:
-            v2_lifecycle_service.rollback_completion(shipment_before)
         raise
     return driver_shipment_record(shipment)
 
@@ -2982,7 +2983,7 @@ def _commit_driver_delivery_completion(
     shipment["arrivalTime"] = timestamp
     shipment["status"] = "awaiting_verification"
     if transition is not None:
-        shipment["tripStatus"] = transition.trip_identity.status.value
+        shipment["tripStatus"] = transition.trip.status.value
     shipment["lastUpdated"] = timestamp
     shipment.setdefault("driverActions", []).append("Confirmed arrival and receiver")
     shipment.setdefault("timeline", []).append({"timestamp": timestamp, "label": f"Destination handoff confirmed by {receiver_name}"})

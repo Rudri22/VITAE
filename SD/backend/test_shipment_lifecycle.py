@@ -1,6 +1,8 @@
 import unittest
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
+import tempfile
 from unittest.mock import patch
 
 try:
@@ -12,6 +14,8 @@ try:
         GARDASIL_9_STATE,
     )
     from .shipment_lifecycle import V2ShipmentLifecycleService
+    from .sqlite_trip_completion_repository import SQLiteTripCompletionRepository
+    from .repository_contract_suite import contract_assignment, contract_trip
     from .shipment_registration import V2ShipmentRegistrationService
     from .shipment_access import InMemoryIdentityAccessRepository
     from .storage import (
@@ -35,6 +39,8 @@ except ImportError:
         GARDASIL_9_STATE,
     )
     from shipment_lifecycle import V2ShipmentLifecycleService
+    from sqlite_trip_completion_repository import SQLiteTripCompletionRepository
+    from repository_contract_suite import contract_assignment, contract_trip
     from shipment_registration import V2ShipmentRegistrationService
     from shipment_access import InMemoryIdentityAccessRepository
     from storage import (
@@ -58,7 +64,9 @@ class V2ShipmentLifecycleTests(unittest.TestCase):
         self.sensors = deepcopy(SENSORS)
         self.repository = InMemoryIdentityAccessRepository()
         self.registration = V2ShipmentRegistrationService(self.repository)
-        self.lifecycle = V2ShipmentLifecycleService(self.repository)
+        self.lifecycle = V2ShipmentLifecycleService(
+            self.repository, self.repository
+        )
         self.processor = TelemetryProcessor(self.repository, self.repository)
         self.monitoring = MonitoringService(
             self.repository,
@@ -105,6 +113,9 @@ class V2ShipmentLifecycleTests(unittest.TestCase):
         self.assertEqual(snapshot.trip_identity.status, TripStatus.COMPLETED)
         self.assertIs(snapshot.live_state, accepted.live_state)
         self.assertEqual(len(self.repository.get_telemetry_history(shipment["lotTripId"])), 1)
+        outcome = self.repository.get_completed_trip_outcome(shipment["lotTripId"])
+        self.assertEqual(outcome.final_live_state_revision, accepted.live_state.revision)
+        self.assertEqual(outcome.final_sample_id, "active")
 
     def test_activation_atomically_changes_trip_and_assignment(self):
         shipment = self.create_and_accept()
@@ -156,28 +167,52 @@ class V2ShipmentLifecycleTests(unittest.TestCase):
         )
         self.assertFalse(self.assignment(shipment["sensorId"]).active)
 
-    def test_failed_legacy_completion_compensates_v2_transition(self):
+    def test_failed_legacy_completion_retries_from_authoritative_v2_result(self):
         shipment = self.create_and_accept()
         self.start(shipment["shipmentId"])
         shipment_before = deepcopy(SHIPMENTS[shipment["shipmentId"]])
         driver_before = deepcopy(DRIVERS["driver-aya"])
+        first_timestamp = "2026-08-20T10:15:00Z"
+        second_timestamp = "2026-08-20T10:16:00Z"
         with patch.object(
             storage_module,
-            "_commit_driver_delivery_completion",
-            side_effect=RuntimeError("simulated completion write failure"),
+            "now_iso",
+            side_effect=(first_timestamp, second_timestamp),
         ):
-            with self.assertRaisesRegex(RuntimeError, "simulated completion"):
-                self.complete(shipment["shipmentId"])
-        self.assertEqual(SHIPMENTS[shipment["shipmentId"]], shipment_before)
-        self.assertEqual(DRIVERS["driver-aya"], driver_before)
+            with patch.object(
+                storage_module,
+                "_commit_driver_delivery_completion",
+                side_effect=RuntimeError("simulated completion write failure"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "simulated completion"):
+                    self.complete(shipment["shipmentId"])
+            self.assertEqual(SHIPMENTS[shipment["shipmentId"]], shipment_before)
+            self.assertEqual(DRIVERS["driver-aya"], driver_before)
+            trip = self.repository.get_trip_by_id(shipment["tripId"])
+            outcome = self.repository.get_completed_trip_outcome(
+                shipment["lotTripId"]
+            )
+            self.assertEqual(trip.status, TripStatus.COMPLETED)
+            self.assertFalse(self.assignment(shipment["sensorId"]).active)
+            self.assertEqual(
+                trip.completed_at,
+                datetime(2026, 8, 20, 10, 15, tzinfo=timezone.utc),
+            )
+            self.assertEqual(outcome.completed_at, trip.completed_at)
+            completed = self.complete(shipment["shipmentId"])
+        self.assertEqual(completed["arrivalTime"], first_timestamp)
         self.assertEqual(
-            self.repository.get_trip_by_id(shipment["tripId"]).status,
-            TripStatus.ACTIVE,
+            self.repository.get_completed_trip_outcome(shipment["lotTripId"]),
+            outcome,
         )
-        self.assertIsNone(
-            self.repository.get_trip_by_id(shipment["tripId"]).completed_at
-        )
-        self.assertTrue(self.assignment(shipment["sensorId"]).active)
+
+    def test_completion_without_telemetry_persists_empty_final_snapshot(self):
+        shipment = self.create_and_accept()
+        self.start(shipment["shipmentId"])
+        self.complete(shipment["shipmentId"])
+        outcome = self.repository.get_completed_trip_outcome(shipment["lotTripId"])
+        self.assertIsNone(outcome.final_status)
+        self.assertIsNone(outcome.final_live_state_revision)
 
     def test_invalid_start_does_not_change_v2_lifecycle(self):
         shipment = self.create_and_accept()
@@ -331,6 +366,34 @@ class V2ShipmentLifecycleTests(unittest.TestCase):
                 "deviceId": "sensor-cold-12",
             },
         }
+
+
+class SQLiteV2ShipmentLifecycleIntegrationTests(unittest.TestCase):
+    def test_completion_service_persists_outcome_across_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "lifecycle.sqlite3"
+            repository = SQLiteTripCompletionRepository(path)
+            trip = contract_trip()
+            assignment = contract_assignment()
+            shipment = {
+                "tripId": trip.trip_id,
+                "lotTripId": trip.lot_trip_id,
+                "v2DeviceAssignmentId": assignment.assignment_id,
+            }
+            repository.register_trip_and_assignment(trip, assignment)
+            lifecycle = V2ShipmentLifecycleService(repository, repository)
+            lifecycle.activate_for_shipment(shipment)
+            completed_at = datetime(2026, 8, 19, 13, 0, tzinfo=timezone.utc)
+            result = lifecycle.complete_for_shipment(shipment, completed_at)
+
+            restarted = SQLiteTripCompletionRepository(path)
+            self.assertEqual(
+                restarted.get_trip_by_id(trip.trip_id), result.trip
+            )
+            self.assertEqual(
+                restarted.get_completed_trip_outcome(trip.lot_trip_id),
+                result.outcome,
+            )
 
 
 if __name__ == "__main__":

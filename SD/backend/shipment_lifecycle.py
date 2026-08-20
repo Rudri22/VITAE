@@ -4,9 +4,11 @@ from typing import Any, Mapping, Optional
 
 try:
     from .state_repository import IdentityRepository
+    from .trip_completion import TripCompletionRepository, TripCompletionResult
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
     from state_repository import IdentityRepository
+    from trip_completion import TripCompletionRepository, TripCompletionResult
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
 
@@ -21,8 +23,13 @@ class V2ShipmentLifecycleError(ValueError):
 
 
 class V2ShipmentLifecycleService:
-    def __init__(self, identity_repository: IdentityRepository):
+    def __init__(
+        self,
+        identity_repository: IdentityRepository,
+        trip_completion_repository: TripCompletionRepository,
+    ):
         self._identity_repository = identity_repository
+        self._trip_completion_repository = trip_completion_repository
 
     def activate_for_shipment(
         self,
@@ -40,14 +47,22 @@ class V2ShipmentLifecycleService:
         self,
         shipment: Mapping[str, Any],
         completed_at: datetime,
-    ) -> V2LifecycleTransition:
-        return self._transition(
-            shipment,
-            TripStatus.ACTIVE,
-            TripStatus.COMPLETED,
-            True,
-            False,
-            completed_at=completed_at,
+    ) -> TripCompletionResult:
+        trip_id, lot_trip_id, assignment_id = self._completion_identity(shipment)
+        trip = self._identity_repository.get_trip_by_id(trip_id)
+        if trip is None or trip.lot_trip_id != lot_trip_id:
+            raise V2ShipmentLifecycleError(
+                "Shipment V2 trip identity is missing or inconsistent"
+            )
+        authoritative_completed_at = (
+            trip.completed_at
+            if trip.status == TripStatus.COMPLETED
+            else completed_at
+        )
+        return self._trip_completion_repository.complete_trip(
+            trip_id,
+            assignment_id,
+            completed_at=authoritative_completed_at,
         )
 
     def rollback_activation(
@@ -62,16 +77,12 @@ class V2ShipmentLifecycleService:
             False,
         )
 
-    def rollback_completion(
-        self,
-        shipment: Mapping[str, Any],
-    ) -> V2LifecycleTransition:
-        return self._transition(
-            shipment,
-            TripStatus.COMPLETED,
-            TripStatus.ACTIVE,
-            False,
-            True,
+    @staticmethod
+    def _completion_identity(shipment):
+        return (
+            _required(shipment, "tripId"),
+            _required(shipment, "lotTripId"),
+            _required(shipment, "v2DeviceAssignmentId"),
         )
 
     def _transition(
