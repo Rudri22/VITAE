@@ -434,7 +434,22 @@ def equal_trip_sample_weights(
 
 
 def temporal_risk_model_inputs(examples):
-    return tuple(_feature_row(example) for example in examples)
+    return tuple(temporal_risk_feature_row(example.features) for example in examples)
+
+
+def temporal_risk_feature_row(features):
+    """Project one validated v1 feature object into the trained column order."""
+    categorical = []
+    for name in TEMPORAL_RISK_CATEGORICAL_FEATURES:
+        value = getattr(features, name)
+        if isinstance(value, Enum):
+            value = value.value
+        categorical.append(MISSING_CATEGORY_TOKEN if value is None else str(value))
+    numeric = []
+    for name in TEMPORAL_RISK_NUMERIC_FEATURES:
+        value = getattr(features, name)
+        numeric.append(float("nan") if value is None else float(value))
+    return categorical + numeric
 
 
 def temporal_risk_targets(examples):
@@ -653,20 +668,6 @@ def _feature_missingness(examples):
             )
         )
     return tuple(values)
-
-
-def _feature_row(example):
-    categorical = []
-    for name in TEMPORAL_RISK_CATEGORICAL_FEATURES:
-        value = getattr(example.features, name)
-        if isinstance(value, Enum):
-            value = value.value
-        categorical.append(MISSING_CATEGORY_TOKEN if value is None else str(value))
-    numeric = []
-    for name in TEMPORAL_RISK_NUMERIC_FEATURES:
-        value = getattr(example.features, name)
-        numeric.append(float("nan") if value is None else float(value))
-    return categorical + numeric
 
 
 def _evaluate_model(model, matrix, labels, indices):

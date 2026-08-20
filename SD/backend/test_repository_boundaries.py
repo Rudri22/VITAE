@@ -22,6 +22,7 @@ try:
         temporal_risk_examples,
         temporal_risk_baseline,
         temporal_risk_calibration,
+        temporal_risk_inference,
         temporal_risk_model_comparison,
         trip_completion,
         sqlite_trip_completion_repository,
@@ -45,6 +46,11 @@ try:
         InMemoryTelemetryStateRepository,
         TelemetryStateRepository,
     )
+    from .temporal_risk_inference import (
+        TemporalRiskInferenceHistoryReader,
+        TemporalRiskInferenceService,
+        TemporalRiskTripReader,
+    )
 except ImportError:
     import alert_lifecycle_service
     import completed_trip_outcome
@@ -65,6 +71,7 @@ except ImportError:
     import temporal_risk_examples
     import temporal_risk_baseline
     import temporal_risk_calibration
+    import temporal_risk_inference
     import temporal_risk_model_comparison
     import trip_completion
     import sqlite_trip_completion_repository
@@ -86,6 +93,11 @@ except ImportError:
         IdentityRepository,
         InMemoryTelemetryStateRepository,
         TelemetryStateRepository,
+    )
+    from temporal_risk_inference import (
+        TemporalRiskInferenceHistoryReader,
+        TemporalRiskInferenceService,
+        TemporalRiskTripReader,
     )
 
 
@@ -113,6 +125,10 @@ class RepositoryBoundaryTests(unittest.TestCase):
         )
         self.assertIsInstance(combined_repository, TelemetryStateRepository)
         self.assertIsInstance(combined_repository, ProcessingBundleRepository)
+        self.assertIsInstance(combined_repository, TemporalRiskTripReader)
+        self.assertIsInstance(
+            combined_repository, TemporalRiskInferenceHistoryReader
+        )
         self.assertIsInstance(
             combined_repository, trip_completion.TripCompletionRepository
         )
@@ -147,6 +163,10 @@ class RepositoryBoundaryTests(unittest.TestCase):
                 "outcome_repository": CompletedTripOutcomeReader,
                 "history_repository": CompletedTripHistoryReader,
             },
+            TemporalRiskInferenceService: {
+                "identity_repository": TemporalRiskTripReader,
+                "history_repository": TemporalRiskInferenceHistoryReader,
+            },
         }
         for service, annotations in expected.items():
             parameters = inspect.signature(service.__init__).parameters
@@ -172,6 +192,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             temporal_risk_examples,
             temporal_risk_baseline,
             temporal_risk_calibration,
+            temporal_risk_inference,
             temporal_risk_model_comparison,
         ):
             source = inspect.getsource(module).lower()

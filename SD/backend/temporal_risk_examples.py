@@ -114,6 +114,18 @@ class TemporalRiskFeatures:
 
 
 @dataclass(frozen=True)
+class TemporalRiskFeatureContext:
+    lot_trip_id: str
+    trip_id: str
+    device_id: str
+    product_id: str
+    presentation: str
+    state: str
+    product_rule_version: str
+    trip_started_at: datetime
+
+
+@dataclass(frozen=True)
 class TemporalRiskLabel:
     adverse_event_within_horizon: bool
     first_adverse_status: Optional[ApplicationStatus]
@@ -207,7 +219,20 @@ def build_temporal_risk_examples(
             example_version=TEMPORAL_RISK_EXAMPLE_VERSION,
             feature_version=TEMPORAL_RISK_FEATURE_VERSION,
             label_version=TEMPORAL_RISK_LABEL_VERSION,
-            features=_features_from_prefix(source, prefix),
+            features=build_temporal_risk_features_from_prefix(
+                TemporalRiskFeatureContext(
+                    lot_trip_id=source.outcome.lot_trip_id,
+                    trip_id=source.outcome.trip_id,
+                    device_id=source.outcome.device_id,
+                    product_id=source.outcome.product_id,
+                    presentation=source.outcome.presentation,
+                    state=source.outcome.state,
+                    product_rule_version=source.outcome.product_rule_version,
+                    trip_started_at=source.outcome.trip_started_at,
+                ),
+                tuple(record for record, _ in prefix),
+                tuple(decision for _, decision in prefix),
+            ),
             label=TemporalRiskLabel(
                 adverse_event_within_horizon=first_adverse is not None,
                 first_adverse_status=(
@@ -317,24 +342,87 @@ def validate_temporal_risk_example(
     return value
 
 
-def _features_from_prefix(source, prefix):
-    records = tuple(record for record, _ in prefix)
-    decisions = tuple(decision for _, decision in prefix)
+def build_temporal_risk_features_from_prefix(
+    context: TemporalRiskFeatureContext,
+    telemetry_records: Iterable[TelemetryRecord],
+    decision_records: Iterable[StatusDecisionRecord],
+) -> TemporalRiskFeatures:
+    """Build v1 features from facts available through one explicit cutoff."""
+    if not isinstance(context, TemporalRiskFeatureContext):
+        raise TemporalRiskExampleError(
+            "context must be a TemporalRiskFeatureContext"
+        )
+    for field in (
+        "lot_trip_id",
+        "trip_id",
+        "device_id",
+        "product_id",
+        "presentation",
+        "state",
+        "product_rule_version",
+    ):
+        _required_text(getattr(context, field), field)
+    _aware_datetime(context.trip_started_at, "trip_started_at")
+    records = tuple(telemetry_records)
+    decisions = tuple(decision_records)
+    if not records or len(records) != len(decisions):
+        raise TemporalRiskExampleError(
+            "Telemetry and decision prefixes must be non-empty and aligned"
+        )
+    for index, (record, decision) in enumerate(zip(records, decisions)):
+        if not isinstance(record, TelemetryRecord):
+            raise TemporalRiskExampleError(
+                "telemetry_records must contain TelemetryRecord values"
+            )
+        if not isinstance(decision, StatusDecisionRecord):
+            raise TemporalRiskExampleError(
+                "decision_records must contain StatusDecisionRecord values"
+            )
+        expected = (
+            context.lot_trip_id,
+            context.trip_id,
+            context.device_id,
+            record.sample_id,
+            record.timestamp,
+            context.product_id,
+            context.product_rule_version,
+        )
+        actual = (
+            record.lot_trip_id,
+            record.trip_id,
+            record.device_id,
+            decision.sample_id,
+            decision.sample_timestamp,
+            decision.product_id,
+            decision.product_rule_version,
+        )
+        if actual != expected or (
+            decision.lot_trip_id != context.lot_trip_id
+            or decision.trip_id != context.trip_id
+            or decision.device_id != context.device_id
+        ):
+            raise TemporalRiskExampleError(
+                "Telemetry, decision, and feature context identities must align"
+            )
+        if index and record.timestamp <= records[index - 1].timestamp:
+            raise TemporalRiskExampleError(
+                "Telemetry prefix timestamps must be strictly increasing"
+            )
     latest_record = records[-1]
     latest_decision = decisions[-1]
     temperatures = tuple(float(record.temperature) for record in records)
     statuses = tuple(decision.status for decision in decisions)
-    return TemporalRiskFeatures(
-        product_id=source.outcome.product_id,
-        presentation=source.outcome.presentation,
-        state=source.outcome.state,
-        product_rule_version=source.outcome.product_rule_version,
+    features = TemporalRiskFeatures(
+        product_id=context.product_id,
+        presentation=context.presentation,
+        state=context.state,
+        product_rule_version=context.product_rule_version,
         current_status=latest_decision.status,
         current_active_rule_id=latest_decision.active_rule_id,
         latest_device_health=latest_record.device_health,
         sample_count=len(records),
         trip_elapsed_minutes=_minutes(
-            latest_record.timestamp - source.outcome.trip_started_at
+            latest_record.timestamp - context.trip_started_at
         ),
         observation_span_minutes=_minutes(
             latest_record.timestamp - records[0].timestamp
@@ -375,6 +463,8 @@ def _features_from_prefix(source, prefix):
             ApplicationStatus.DATA_ERROR
         ),
     )
+    _validate_features(features)
+    return features
 
 
 def _temperature_slope_per_hour(records: Tuple[TelemetryRecord, ...]) -> float:
