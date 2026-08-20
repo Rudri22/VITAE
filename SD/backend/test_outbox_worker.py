@@ -326,10 +326,30 @@ class OutboxWorkerInfrastructureTests(unittest.TestCase):
         self.assertEqual(schedule["Type"], "ScheduleV2")
         self.assertNotIn("OutboxRecoverySchedule", self.resources)
         schedule = schedule["Properties"]
+        self.assertEqual(
+            schedule["Name"],
+            {"Fn::Sub": "${AWS::StackName}-outbox-recovery"},
+        )
+        deployed_name = schedule["Name"]["Fn::Sub"].replace(
+            "${AWS::StackName}", "vitae-step70-contract-test"
+        )
+        self.assertTrue(deployed_name.startswith("vitae-step70-"))
+        self.assertTrue(deployed_name.endswith("-outbox-recovery"))
         self.assertEqual(schedule["FlexibleTimeWindow"], {"Mode": "OFF"})
         self.assertEqual(
             self.template["Parameters"]["ScheduleExpression"]["Default"],
             "rate(1 minute)",
+        )
+        self.assertEqual(
+            schedule["ScheduleExpression"], {"Ref": "ScheduleExpression"}
+        )
+        self.assertEqual(schedule["State"], {"Ref": "ScheduleState"})
+        self.assertEqual(function["ReservedConcurrentExecutions"], 1)
+        self.assertFalse(
+            any(
+                resource["Type"].startswith("AWS::DynamoDB::")
+                for resource in self.resources.values()
+            )
         )
 
     def test_scheduler_and_lambda_execution_failures_use_separate_queues(self):

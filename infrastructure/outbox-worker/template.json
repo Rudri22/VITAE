@@ -60,6 +60,7 @@
           "OutboxRecoverySchedule": {
             "Type": "ScheduleV2",
             "Properties": {
+              "Name": {"Fn::Sub": "${AWS::StackName}-outbox-recovery"},
               "Description": "Invoke the bounded VITAE outbox recovery worker",
               "ScheduleExpression": {"Ref": "ScheduleExpression"},
               "State": {"Ref": "ScheduleState"},
