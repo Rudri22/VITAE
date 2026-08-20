@@ -13,6 +13,7 @@ try:
         shipment_access,
         sqlite_completed_trip_outcome_repository,
         sqlite_identity_repository,
+        sqlite_telemetry_repository,
         shipment_lifecycle,
         shipment_registration,
         telemetry_processor,
@@ -42,6 +43,7 @@ except ImportError:
     import shipment_access
     import sqlite_completed_trip_outcome_repository
     import sqlite_identity_repository
+    import sqlite_telemetry_repository
     import shipment_lifecycle
     import shipment_registration
     import telemetry_processor
@@ -126,6 +128,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             shipment_access,
             sqlite_completed_trip_outcome_repository,
             sqlite_identity_repository,
+            sqlite_telemetry_repository,
         ):
             source = inspect.getsource(module).lower()
             with self.subTest(module=module.__name__):
