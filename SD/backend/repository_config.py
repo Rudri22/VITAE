@@ -41,6 +41,7 @@ class RepositoryConfig:
     mode: RepositoryMode
     aws_region: Optional[str] = None
     identity_table: Optional[str] = None
+    telemetry_table: Optional[str] = None
     aws_profile: Optional[str] = None
     dynamodb_endpoint_url: Optional[str] = None
     key_namespace: str = ""
@@ -62,11 +63,13 @@ class RepositoryConfig:
             return cls(mode=mode)
 
         region = _required_setting(values, "VITAE_AWS_REGION")
-        table = _required_setting(values, "VITAE_IDENTITY_TABLE")
+        identity_table = _required_setting(values, "VITAE_IDENTITY_TABLE")
+        telemetry_table = _required_setting(values, "VITAE_TELEMETRY_TABLE")
         return cls(
             mode=mode,
             aws_region=region,
-            identity_table=table,
+            identity_table=identity_table,
+            telemetry_table=telemetry_table,
             aws_profile=_optional_setting(values, "VITAE_AWS_PROFILE"),
             dynamodb_endpoint_url=_optional_setting(
                 values, "VITAE_DYNAMODB_ENDPOINT_URL"
@@ -91,7 +94,7 @@ class RepositoryComposition:
 
     @property
     def telemetry_is_persistent(self) -> bool:
-        return False
+        return self.config.mode == RepositoryMode.DYNAMODB
 
     @property
     def alerts_are_persistent(self) -> bool:
@@ -116,25 +119,33 @@ def compose_repositories(
         )
     if config.mode != RepositoryMode.DYNAMODB:
         raise RepositoryConfigurationError("Unsupported repository mode")
-    if not config.aws_region or not config.identity_table:
+    if not config.aws_region or not config.identity_table or not config.telemetry_table:
         raise RepositoryConfigurationError(
-            "DynamoDB mode requires aws_region and identity_table"
+            "DynamoDB mode requires aws_region, identity_table, and telemetry_table"
         )
     try:
         from .dynamo_identity_repository import DynamoIdentityAccessRepository
+        from .dynamo_telemetry_repository import DynamoTelemetryStateRepository
     except ImportError:
         from dynamo_identity_repository import DynamoIdentityAccessRepository
+        from dynamo_telemetry_repository import DynamoTelemetryStateRepository
     client = dynamodb_client or _build_dynamodb_client(config)
+    _require_dynamodb_table(client, config.telemetry_table)
     identity = DynamoIdentityAccessRepository(
         client,
         config.identity_table,
+        key_namespace=config.key_namespace,
+    )
+    telemetry = DynamoTelemetryStateRepository(
+        client,
+        config.telemetry_table,
         key_namespace=config.key_namespace,
     )
     return RepositoryComposition(
         config=config,
         identity_repository=identity,
         shipment_access_repository=identity,
-        telemetry_state_repository=InMemoryProcessingBundleRepository(),
+        telemetry_state_repository=telemetry,
         alert_repository=InMemoryAlertRepository(),
     )
 
@@ -173,6 +184,15 @@ def _build_dynamodb_client(config):
     except Exception as error:
         raise RepositoryConfigurationError(
             "Unable to initialize the configured DynamoDB repository"
+        ) from error
+
+
+def _require_dynamodb_table(client, table_name):
+    try:
+        client.describe_table(TableName=table_name)
+    except Exception as error:
+        raise RepositoryConfigurationError(
+            f"Configured DynamoDB telemetry table is unavailable: {table_name}"
         ) from error
 
 

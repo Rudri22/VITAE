@@ -1,7 +1,7 @@
 import os
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import boto3
 
@@ -13,6 +13,7 @@ try:
         AlertLifecycleService,
     )
     from .dynamo_identity_repository import DynamoIdentityAccessRepository
+    from .dynamo_telemetry_repository import DynamoTelemetryStateRepository
     from .monitoring_service import MonitoringService
     from .repository_config import (
         RepositoryConfig,
@@ -22,6 +23,10 @@ try:
         shipment_access_resolver,
     )
     from .repository_contract_suite import (
+        contract_alert_outbox_event,
+        contract_decision_record,
+        contract_sample,
+        contract_state,
         contract_alert,
         contract_shipment_access,
     )
@@ -37,7 +42,10 @@ try:
     )
     from .shipment_lifecycle import V2ShipmentLifecycleService
     from .shipment_registration import V2ShipmentRegistrationService
-    from .state_repository import TelemetryStateRepository
+    from .state_repository import (
+        TelemetryStateRepository,
+        telemetry_record_from_sample,
+    )
     from .telemetry_processor import TelemetryProcessor
 except ImportError:
     from alert_lifecycle_service import (
@@ -47,6 +55,7 @@ except ImportError:
         AlertLifecycleService,
     )
     from dynamo_identity_repository import DynamoIdentityAccessRepository
+    from dynamo_telemetry_repository import DynamoTelemetryStateRepository
     from monitoring_service import MonitoringService
     from repository_config import (
         RepositoryConfig,
@@ -56,6 +65,10 @@ except ImportError:
         shipment_access_resolver,
     )
     from repository_contract_suite import (
+        contract_alert_outbox_event,
+        contract_decision_record,
+        contract_sample,
+        contract_state,
         contract_alert,
         contract_shipment_access,
     )
@@ -71,7 +84,10 @@ except ImportError:
     )
     from shipment_lifecycle import V2ShipmentLifecycleService
     from shipment_registration import V2ShipmentRegistrationService
-    from state_repository import TelemetryStateRepository
+    from state_repository import (
+        TelemetryStateRepository,
+        telemetry_record_from_sample,
+    )
     from telemetry_processor import TelemetryProcessor
 
 
@@ -109,12 +125,17 @@ class RepositoryConfigTests(unittest.TestCase):
                 {"VITAE_REPOSITORY_MODE": "sqlite-by-mistake"}
             )
 
-    def test_dynamodb_requires_region_and_table(self):
+    def test_dynamodb_requires_region_and_both_tables(self):
         cases = (
             {"VITAE_REPOSITORY_MODE": "dynamodb"},
             {
                 "VITAE_REPOSITORY_MODE": "dynamodb",
                 "VITAE_AWS_REGION": "us-east-1",
+            },
+            {
+                "VITAE_REPOSITORY_MODE": "dynamodb",
+                "VITAE_AWS_REGION": "us-east-1",
+                "VITAE_IDENTITY_TABLE": "identity-dev",
             },
         )
         for values in cases:
@@ -128,6 +149,7 @@ class RepositoryConfigTests(unittest.TestCase):
                 "VITAE_REPOSITORY_MODE": "DYNAMODB",
                 "VITAE_AWS_REGION": "us-east-1",
                 "VITAE_IDENTITY_TABLE": "identity-dev",
+                "VITAE_TELEMETRY_TABLE": "telemetry-dev",
                 "VITAE_AWS_PROFILE": "vitae-dev",
                 "VITAE_DYNAMODB_ENDPOINT_URL": "http://127.0.0.1:8000",
                 "VITAE_DYNAMODB_KEY_NAMESPACE": "test-scope",
@@ -136,17 +158,20 @@ class RepositoryConfigTests(unittest.TestCase):
         self.assertEqual(config.mode, RepositoryMode.DYNAMODB)
         self.assertEqual(config.aws_region, "us-east-1")
         self.assertEqual(config.identity_table, "identity-dev")
+        self.assertEqual(config.telemetry_table, "telemetry-dev")
         self.assertEqual(config.aws_profile, "vitae-dev")
         self.assertEqual(config.key_namespace, "test-scope")
 
-    def test_dynamodb_composition_uses_injected_client_and_partial_persistence(self):
-        client = object()
+    def test_dynamodb_composition_uses_injected_client_and_persistent_telemetry(self):
+        client = Mock()
         config = RepositoryConfig(
             mode=RepositoryMode.DYNAMODB,
             aws_region="us-east-1",
             identity_table="identity-dev",
+            telemetry_table="telemetry-dev",
         )
         composition = compose_repositories(config, dynamodb_client=client)
+        client.describe_table.assert_called_once_with(TableName="telemetry-dev")
         self.assertIsInstance(
             composition.identity_repository,
             DynamoIdentityAccessRepository,
@@ -161,14 +186,18 @@ class RepositoryConfigTests(unittest.TestCase):
         )
         self.assertIsInstance(
             composition.telemetry_state_repository,
-            TelemetryStateRepository,
+            DynamoTelemetryStateRepository,
+        )
+        self.assertEqual(
+            composition.telemetry_state_repository.table_name,
+            "telemetry-dev",
         )
         self.assertIsInstance(
             composition.shipment_access_repository,
             ShipmentAccessRepository,
         )
         self.assertTrue(composition.identity_is_persistent)
-        self.assertFalse(composition.telemetry_is_persistent)
+        self.assertTrue(composition.telemetry_is_persistent)
         self.assertFalse(composition.alerts_are_persistent)
 
     def test_dynamodb_initialization_failure_does_not_fallback_to_memory(self):
@@ -176,6 +205,7 @@ class RepositoryConfigTests(unittest.TestCase):
             mode=RepositoryMode.DYNAMODB,
             aws_region="us-east-1",
             identity_table="identity-dev",
+            telemetry_table="telemetry-dev",
         )
         with patch(
             f"{RepositoryConfig.__module__}._build_dynamodb_client",
@@ -185,6 +215,22 @@ class RepositoryConfigTests(unittest.TestCase):
                 RepositoryConfigurationError, "AWS unavailable"
             ):
                 compose_repositories(config)
+
+    def test_unavailable_telemetry_table_fails_without_memory_fallback(self):
+        client = Mock()
+        client.describe_table.side_effect = RuntimeError("table not found")
+        config = RepositoryConfig(
+            mode=RepositoryMode.DYNAMODB,
+            aws_region="us-east-1",
+            identity_table="identity-dev",
+            telemetry_table="missing-telemetry-dev",
+        )
+
+        with self.assertRaisesRegex(
+            RepositoryConfigurationError,
+            "telemetry table is unavailable",
+        ):
+            compose_repositories(config, dynamodb_client=client)
 
     def test_shipment_access_resolver_translates_repository_domain_model(self):
         repository = InMemoryIdentityAccessRepository()
@@ -355,25 +401,29 @@ class DynamoLocalCompositionServiceTests(
             aws_access_key_id="local",
             aws_secret_access_key="local",
         )
-        cls.table_name = f"vitae-composition-test-{uuid.uuid4().hex}"
-        cls.client.create_table(
-            TableName=cls.table_name,
-            KeySchema=[
-                {"AttributeName": "PK", "KeyType": "HASH"},
-                {"AttributeName": "SK", "KeyType": "RANGE"},
-            ],
-            AttributeDefinitions=[
-                {"AttributeName": "PK", "AttributeType": "S"},
-                {"AttributeName": "SK", "AttributeType": "S"},
-            ],
-            BillingMode="PAY_PER_REQUEST",
-        )
-        cls.client.get_waiter("table_exists").wait(TableName=cls.table_name)
+        suffix = uuid.uuid4().hex
+        cls.identity_table_name = f"vitae-composition-identity-{suffix}"
+        cls.telemetry_table_name = f"vitae-composition-telemetry-{suffix}"
+        for table_name in (cls.identity_table_name, cls.telemetry_table_name):
+            cls.client.create_table(
+                TableName=table_name,
+                KeySchema=[
+                    {"AttributeName": "PK", "KeyType": "HASH"},
+                    {"AttributeName": "SK", "KeyType": "RANGE"},
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "PK", "AttributeType": "S"},
+                    {"AttributeName": "SK", "AttributeType": "S"},
+                ],
+                BillingMode="PAY_PER_REQUEST",
+            )
+            cls.client.get_waiter("table_exists").wait(TableName=table_name)
 
     @classmethod
     def tearDownClass(cls):
         try:
-            cls.client.delete_table(TableName=cls.table_name)
+            for table_name in (cls.identity_table_name, cls.telemetry_table_name):
+                cls.client.delete_table(TableName=table_name)
         finally:
             super().tearDownClass()
 
@@ -382,10 +432,57 @@ class DynamoLocalCompositionServiceTests(
             RepositoryConfig(
                 mode=RepositoryMode.DYNAMODB,
                 aws_region="us-east-1",
-                identity_table=self.table_name,
+                identity_table=self.identity_table_name,
+                telemetry_table=self.telemetry_table_name,
                 key_namespace=uuid.uuid4().hex,
             ),
             dynamodb_client=self.client,
+        )
+
+    def test_restart_preserves_bundle_but_not_memory_alert_repository(self):
+        namespace = uuid.uuid4().hex
+        config = RepositoryConfig(
+            mode=RepositoryMode.DYNAMODB,
+            aws_region="us-east-1",
+            identity_table=self.identity_table_name,
+            telemetry_table=self.telemetry_table_name,
+            key_namespace=namespace,
+        )
+        first = compose_repositories(config, dynamodb_client=self.client)
+        sample = contract_sample()
+        state = contract_state(sample)
+        record = telemetry_record_from_sample(
+            state.trip_id,
+            state.lot_trip_id,
+            sample,
+        )
+        decision = contract_decision_record(sample, state)
+        outbox = contract_alert_outbox_event(decision)
+        first.telemetry_state_repository.commit_processing_bundle(
+            record,
+            state,
+            decision,
+            outbox,
+            expected_revision=None,
+        )
+        first.alert_repository.save_alert(outbox.alert_candidate)
+
+        restarted = compose_repositories(config, dynamodb_client=self.client)
+
+        self.assertEqual(
+            restarted.telemetry_state_repository.get_live_state(state.lot_trip_id),
+            state,
+        )
+        self.assertEqual(
+            restarted.telemetry_state_repository.get_decision(decision.decision_id),
+            decision,
+        )
+        self.assertEqual(
+            restarted.telemetry_state_repository.get_outbox_event(outbox.event_id),
+            outbox,
+        )
+        self.assertIsNone(
+            restarted.alert_repository.get_alert(outbox.alert_candidate.alert_id)
         )
 
 
