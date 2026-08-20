@@ -20,6 +20,13 @@ try:
     from .risk_rules import ApplicationStatus
     from .state_repository import LiveState, TelemetryRecord
     from .shipment_access import ShipmentAccess
+    from .temporal_risk_examples import (
+        TemporalRiskExample,
+        TemporalRiskExampleError,
+        TemporalRiskFeatures,
+        TemporalRiskLabel,
+        validate_temporal_risk_example,
+    )
     from .trip_identity import (
         DeviceAssignment,
         TripIdentity,
@@ -44,6 +51,13 @@ except ImportError:
     from risk_rules import ApplicationStatus
     from state_repository import LiveState, TelemetryRecord
     from shipment_access import ShipmentAccess
+    from temporal_risk_examples import (
+        TemporalRiskExample,
+        TemporalRiskExampleError,
+        TemporalRiskFeatures,
+        TemporalRiskLabel,
+        validate_temporal_risk_example,
+    )
     from trip_identity import (
         DeviceAssignment,
         TripIdentity,
@@ -762,6 +776,231 @@ def deserialize_completed_trip_dataset_record(
         raise RepositorySerializationError(str(error)) from error
 
 
+def serialize_temporal_risk_example(
+    value: TemporalRiskExample,
+) -> dict[str, Any]:
+    try:
+        validate_temporal_risk_example(value)
+    except TemporalRiskExampleError as error:
+        raise RepositorySerializationError(str(error)) from error
+    features = value.features
+    label = value.label
+    return _document(
+        "vitae.temporal_risk_example",
+        {
+            "example_id": value.example_id,
+            "lot_trip_id": value.lot_trip_id,
+            "trip_id": value.trip_id,
+            "cutoff_sample_id": value.cutoff_sample_id,
+            "cutoff_at": _serialize_datetime(value.cutoff_at, "cutoff_at"),
+            "horizon_ends_at": _serialize_datetime(
+                value.horizon_ends_at, "horizon_ends_at"
+            ),
+            "prediction_horizon_minutes": value.prediction_horizon_minutes,
+            "example_version": value.example_version,
+            "feature_version": value.feature_version,
+            "label_version": value.label_version,
+            "features": {
+                field: (
+                    _enum_value(item, ApplicationStatus, field)
+                    if field == "current_status"
+                    else item
+                )
+                for field, item in vars(features).items()
+            },
+            "label": {
+                "adverse_event_within_horizon": (
+                    label.adverse_event_within_horizon
+                ),
+                "first_adverse_status": (
+                    None
+                    if label.first_adverse_status is None
+                    else _enum_value(
+                        label.first_adverse_status,
+                        ApplicationStatus,
+                        "first_adverse_status",
+                    )
+                ),
+                "first_adverse_at": _optional_datetime(
+                    label.first_adverse_at,
+                    "first_adverse_at",
+                ),
+            },
+        },
+    )
+
+
+def deserialize_temporal_risk_example(
+    payload: Mapping[str, Any],
+) -> TemporalRiskExample:
+    fields = _fields(
+        payload,
+        "vitae.temporal_risk_example",
+        _TEMPORAL_RISK_EXAMPLE_FIELDS,
+    )
+    feature_fields = _plain_fields(
+        fields["features"],
+        "features",
+        _TEMPORAL_RISK_FEATURE_FIELDS,
+    )
+    label_fields = _plain_fields(
+        fields["label"],
+        "label",
+        _TEMPORAL_RISK_LABEL_FIELDS,
+    )
+    features = TemporalRiskFeatures(
+        product_id=_text(feature_fields, "product_id"),
+        presentation=_text(feature_fields, "presentation"),
+        state=_text(feature_fields, "state"),
+        product_rule_version=_text(feature_fields, "product_rule_version"),
+        current_status=_enum(
+            feature_fields["current_status"],
+            ApplicationStatus,
+            "current_status",
+        ),
+        current_active_rule_id=_optional_text_value(
+            feature_fields["current_active_rule_id"],
+            "current_active_rule_id",
+        ),
+        latest_device_health=_optional_text_value(
+            feature_fields["latest_device_health"],
+            "latest_device_health",
+        ),
+        sample_count=_positive_integer(
+            feature_fields["sample_count"], "sample_count"
+        ),
+        trip_elapsed_minutes=_number(
+            feature_fields["trip_elapsed_minutes"], "trip_elapsed_minutes"
+        ),
+        observation_span_minutes=_number(
+            feature_fields["observation_span_minutes"],
+            "observation_span_minutes",
+        ),
+        minutes_since_previous_sample=_optional_number(
+            feature_fields["minutes_since_previous_sample"],
+            "minutes_since_previous_sample",
+        ),
+        minutes_since_previous_sample_missing=_boolean(
+            feature_fields["minutes_since_previous_sample_missing"],
+            "minutes_since_previous_sample_missing",
+        ),
+        latest_temperature_c=_number(
+            feature_fields["latest_temperature_c"], "latest_temperature_c"
+        ),
+        mean_temperature_c=_number(
+            feature_fields["mean_temperature_c"], "mean_temperature_c"
+        ),
+        minimum_temperature_c=_number(
+            feature_fields["minimum_temperature_c"], "minimum_temperature_c"
+        ),
+        maximum_temperature_c=_number(
+            feature_fields["maximum_temperature_c"], "maximum_temperature_c"
+        ),
+        temperature_range_c=_number(
+            feature_fields["temperature_range_c"], "temperature_range_c"
+        ),
+        temperature_change_from_first_c=_number(
+            feature_fields["temperature_change_from_first_c"],
+            "temperature_change_from_first_c",
+        ),
+        temperature_slope_c_per_hour=_number(
+            feature_fields["temperature_slope_c_per_hour"],
+            "temperature_slope_c_per_hour",
+        ),
+        latest_battery_level_percent=_optional_number(
+            feature_fields["latest_battery_level_percent"],
+            "latest_battery_level_percent",
+        ),
+        latest_battery_level_missing=_boolean(
+            feature_fields["latest_battery_level_missing"],
+            "latest_battery_level_missing",
+        ),
+        current_excursion_episode_duration_minutes=_number(
+            feature_fields["current_excursion_episode_duration_minutes"],
+            "current_excursion_episode_duration_minutes",
+        ),
+        current_cumulative_excursion_duration_minutes=_number(
+            feature_fields["current_cumulative_excursion_duration_minutes"],
+            "current_cumulative_excursion_duration_minutes",
+        ),
+        current_excursion_utilization=_optional_number(
+            feature_fields["current_excursion_utilization"],
+            "current_excursion_utilization",
+        ),
+        current_excursion_utilization_missing=_boolean(
+            feature_fields["current_excursion_utilization_missing"],
+            "current_excursion_utilization_missing",
+        ),
+        safe_count_through_cutoff=_non_negative_integer(
+            feature_fields["safe_count_through_cutoff"],
+            "safe_count_through_cutoff",
+        ),
+        monitor_count_through_cutoff=_non_negative_integer(
+            feature_fields["monitor_count_through_cutoff"],
+            "monitor_count_through_cutoff",
+        ),
+        at_risk_count_through_cutoff=_non_negative_integer(
+            feature_fields["at_risk_count_through_cutoff"],
+            "at_risk_count_through_cutoff",
+        ),
+        critical_count_through_cutoff=_non_negative_integer(
+            feature_fields["critical_count_through_cutoff"],
+            "critical_count_through_cutoff",
+        ),
+        rule_violation_count_through_cutoff=_non_negative_integer(
+            feature_fields["rule_violation_count_through_cutoff"],
+            "rule_violation_count_through_cutoff",
+        ),
+        data_error_count_through_cutoff=_non_negative_integer(
+            feature_fields["data_error_count_through_cutoff"],
+            "data_error_count_through_cutoff",
+        ),
+    )
+    first_adverse_status = label_fields["first_adverse_status"]
+    label = TemporalRiskLabel(
+        adverse_event_within_horizon=_boolean(
+            label_fields["adverse_event_within_horizon"],
+            "adverse_event_within_horizon",
+        ),
+        first_adverse_status=(
+            None
+            if first_adverse_status is None
+            else _enum(
+                first_adverse_status,
+                ApplicationStatus,
+                "first_adverse_status",
+            )
+        ),
+        first_adverse_at=_deserialize_optional_datetime(
+            label_fields["first_adverse_at"],
+            "first_adverse_at",
+        ),
+    )
+    value = TemporalRiskExample(
+        example_id=_text(fields, "example_id"),
+        lot_trip_id=_text(fields, "lot_trip_id"),
+        trip_id=_text(fields, "trip_id"),
+        cutoff_sample_id=_text(fields, "cutoff_sample_id"),
+        cutoff_at=_deserialize_datetime(fields["cutoff_at"], "cutoff_at"),
+        horizon_ends_at=_deserialize_datetime(
+            fields["horizon_ends_at"], "horizon_ends_at"
+        ),
+        prediction_horizon_minutes=_positive_integer(
+            fields["prediction_horizon_minutes"],
+            "prediction_horizon_minutes",
+        ),
+        example_version=_text(fields, "example_version"),
+        feature_version=_text(fields, "feature_version"),
+        label_version=_text(fields, "label_version"),
+        features=features,
+        label=label,
+    )
+    try:
+        return validate_temporal_risk_example(value)
+    except TemporalRiskExampleError as error:
+        raise RepositorySerializationError(str(error)) from error
+
+
 _TRIP_IDENTITY_V1_FIELDS = frozenset(("trip_id", "lot_trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "origin", "destination", "start_time", "status"))
 _TRIP_IDENTITY_V2_FIELDS = _TRIP_IDENTITY_V1_FIELDS | frozenset(("completed_at",))
 _ASSIGNMENT_FIELDS = frozenset(("assignment_id", "device_id", "trip_id", "lot_trip_id", "assigned_at", "active"))
@@ -775,6 +1014,9 @@ _ALERT_ACTION_FIELDS = frozenset(("action_id", "description", "actor_id", "recor
 _ALERT_FIELDS = frozenset(("alert_id", "alert_type", "severity", "status", "trip_id", "lot_trip_id", "device_id", "sample_id", "source_status", "reason_code", "active_rule_id", "message", "recommended_action", "detected_at", "updated_at", "acknowledged_by", "acknowledged_at", "actions", "resolved_by", "resolved_at", "resolution_note"))
 _COMPLETED_TRIP_OUTCOME_FIELDS = frozenset(("lot_trip_id", "trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "trip_started_at", "completed_at", "final_status", "final_reason_code", "final_active_rule_id", "final_sample_id", "final_sample_timestamp", "final_temperature", "final_live_state_revision", "final_excursion_episode_duration_minutes", "final_cumulative_excursion_duration_minutes", "final_excursion_utilization"))
 _COMPLETED_TRIP_DATASET_RECORD_FIELDS = frozenset(("lot_trip_id", "outcome", "telemetry_records", "decision_records"))
+_TEMPORAL_RISK_EXAMPLE_FIELDS = frozenset(("example_id", "lot_trip_id", "trip_id", "cutoff_sample_id", "cutoff_at", "horizon_ends_at", "prediction_horizon_minutes", "example_version", "feature_version", "label_version", "features", "label"))
+_TEMPORAL_RISK_FEATURE_FIELDS = frozenset(("product_id", "presentation", "state", "product_rule_version", "current_status", "current_active_rule_id", "latest_device_health", "sample_count", "trip_elapsed_minutes", "observation_span_minutes", "minutes_since_previous_sample", "minutes_since_previous_sample_missing", "latest_temperature_c", "mean_temperature_c", "minimum_temperature_c", "maximum_temperature_c", "temperature_range_c", "temperature_change_from_first_c", "temperature_slope_c_per_hour", "latest_battery_level_percent", "latest_battery_level_missing", "current_excursion_episode_duration_minutes", "current_cumulative_excursion_duration_minutes", "current_excursion_utilization", "current_excursion_utilization_missing", "safe_count_through_cutoff", "monitor_count_through_cutoff", "at_risk_count_through_cutoff", "critical_count_through_cutoff", "rule_violation_count_through_cutoff", "data_error_count_through_cutoff"))
+_TEMPORAL_RISK_LABEL_FIELDS = frozenset(("adverse_event_within_horizon", "first_adverse_status", "first_adverse_at"))
 
 
 def _document(
@@ -819,6 +1061,15 @@ def _fields(
         if unexpected:
             details.append("unexpected: " + ", ".join(unexpected))
         raise RepositorySerializationError("Invalid schema fields (" + "; ".join(details) + ")")
+    return payload
+
+
+def _plain_fields(payload, field, expected_fields):
+    if not isinstance(payload, Mapping):
+        raise RepositorySerializationError(f"{field} must be a mapping")
+    actual = set(payload)
+    if actual != set(expected_fields):
+        raise RepositorySerializationError(f"Invalid {field} fields")
     return payload
 
 

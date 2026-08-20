@@ -33,6 +33,7 @@ try:
         deserialize_telemetry_record,
         deserialize_status_decision_record,
         deserialize_trip_identity,
+        deserialize_temporal_risk_example,
         serialize_alert,
         serialize_alert_outbox_event,
         serialize_alert_action,
@@ -44,9 +45,21 @@ try:
         serialize_telemetry_record,
         serialize_status_decision_record,
         serialize_trip_identity,
+        serialize_temporal_risk_example,
     )
     from .state_repository import telemetry_record_from_sample
+    from .risk_rules import ApplicationStatus
     from .trip_identity import TripStatus
+    from .temporal_risk_examples import (
+        TEMPORAL_RISK_EXAMPLE_VERSION,
+        TEMPORAL_RISK_FEATURE_VERSION,
+        TEMPORAL_RISK_LABEL_VERSION,
+        TEMPORAL_RISK_PREDICTION_HORIZON_MINUTES,
+        TemporalRiskExample,
+        TemporalRiskFeatures,
+        TemporalRiskLabel,
+        temporal_risk_example_id,
+    )
 except ImportError:
     from alerting import InMemoryAlertRepository
     from completed_trip_dataset import CompletedTripDatasetRecord
@@ -76,6 +89,7 @@ except ImportError:
         deserialize_telemetry_record,
         deserialize_status_decision_record,
         deserialize_trip_identity,
+        deserialize_temporal_risk_example,
         serialize_alert,
         serialize_alert_outbox_event,
         serialize_alert_action,
@@ -87,9 +101,73 @@ except ImportError:
         serialize_telemetry_record,
         serialize_status_decision_record,
         serialize_trip_identity,
+        serialize_temporal_risk_example,
     )
     from state_repository import telemetry_record_from_sample
+    from risk_rules import ApplicationStatus
     from trip_identity import TripStatus
+    from temporal_risk_examples import (
+        TEMPORAL_RISK_EXAMPLE_VERSION,
+        TEMPORAL_RISK_FEATURE_VERSION,
+        TEMPORAL_RISK_LABEL_VERSION,
+        TEMPORAL_RISK_PREDICTION_HORIZON_MINUTES,
+        TemporalRiskExample,
+        TemporalRiskFeatures,
+        TemporalRiskLabel,
+        temporal_risk_example_id,
+    )
+
+
+def contract_temporal_risk_example():
+    features = TemporalRiskFeatures(
+        product_id="gardasil-9",
+        presentation="single-dose-prefilled-syringe-0.5-ml",
+        state="unopened",
+        product_rule_version="uspi-v503-i-2503r017",
+        current_status=ApplicationStatus.SAFE,
+        current_active_rule_id=None,
+        latest_device_health="OK",
+        sample_count=1,
+        trip_elapsed_minutes=0.0,
+        observation_span_minutes=0.0,
+        minutes_since_previous_sample=None,
+        minutes_since_previous_sample_missing=True,
+        latest_temperature_c=6.0,
+        mean_temperature_c=6.0,
+        minimum_temperature_c=6.0,
+        maximum_temperature_c=6.0,
+        temperature_range_c=0.0,
+        temperature_change_from_first_c=0.0,
+        temperature_slope_c_per_hour=0.0,
+        latest_battery_level_percent=90.0,
+        latest_battery_level_missing=False,
+        current_excursion_episode_duration_minutes=0.0,
+        current_cumulative_excursion_duration_minutes=0.0,
+        current_excursion_utilization=None,
+        current_excursion_utilization_missing=True,
+        safe_count_through_cutoff=1,
+        monitor_count_through_cutoff=0,
+        at_risk_count_through_cutoff=0,
+        critical_count_through_cutoff=0,
+        rule_violation_count_through_cutoff=0,
+        data_error_count_through_cutoff=0,
+    )
+    return TemporalRiskExample(
+        example_id=temporal_risk_example_id(
+            "contract-lot-trip", "contract-sample-1"
+        ),
+        lot_trip_id="contract-lot-trip",
+        trip_id="contract-trip",
+        cutoff_sample_id="contract-sample-1",
+        cutoff_at=CONTRACT_TIME,
+        horizon_ends_at=CONTRACT_TIME + timedelta(minutes=30),
+        prediction_horizon_minutes=TEMPORAL_RISK_PREDICTION_HORIZON_MINUTES,
+        example_version=TEMPORAL_RISK_EXAMPLE_VERSION,
+        feature_version=TEMPORAL_RISK_FEATURE_VERSION,
+        label_version=TEMPORAL_RISK_LABEL_VERSION,
+        features=features,
+        label=TemporalRiskLabel(False, None, None),
+    )
 
 
 class RepositorySerializationTests(unittest.TestCase):
@@ -206,6 +284,15 @@ class RepositorySerializationTests(unittest.TestCase):
             decision,
         )
 
+    def test_temporal_risk_example_round_trip(self):
+        example = contract_temporal_risk_example()
+        self.assertEqual(
+            deserialize_temporal_risk_example(
+                serialize_temporal_risk_example(example)
+            ),
+            example,
+        )
+
     def test_alert_outbox_event_round_trip_preserves_exact_candidate(self):
         event = contract_alert_outbox_event()
         restored = deserialize_alert_outbox_event(
@@ -292,6 +379,7 @@ class RepositorySerializationTests(unittest.TestCase):
                     ),
                 )
             ),
+            serialize_temporal_risk_example(contract_temporal_risk_example()),
         )
         for document in documents:
             with self.subTest(schema=document["schema"]):

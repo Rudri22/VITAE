@@ -18,6 +18,7 @@ try:
         shipment_lifecycle,
         shipment_registration,
         telemetry_processor,
+        temporal_risk_examples,
         trip_completion,
         sqlite_trip_completion_repository,
     )
@@ -56,6 +57,7 @@ except ImportError:
     import shipment_lifecycle
     import shipment_registration
     import telemetry_processor
+    import temporal_risk_examples
     import trip_completion
     import sqlite_trip_completion_repository
     from alerting import AlertRepository, InMemoryAlertRepository
@@ -158,6 +160,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             sqlite_telemetry_repository,
             trip_completion,
             sqlite_trip_completion_repository,
+            temporal_risk_examples,
         ):
             source = inspect.getsource(module).lower()
             with self.subTest(module=module.__name__):
