@@ -1,7 +1,7 @@
 import inspect
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, fields, replace
 from threading import Barrier
 from types import SimpleNamespace
 
@@ -88,6 +88,12 @@ class DecisionOutboxModelTests(unittest.TestCase):
             decision.reason_code = "CHANGED"
         with self.assertRaises(FrozenInstanceError):
             event.attempt_count = 99
+
+    def test_outbox_domain_model_has_no_persistence_record_version(self):
+        self.assertNotIn(
+            "record_version",
+            {field.name for field in fields(contract_alert_outbox_event())},
+        )
 
     def test_processing_result_factory_preserves_authoritative_decision(self):
         sample = contract_sample()

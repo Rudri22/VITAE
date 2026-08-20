@@ -322,13 +322,16 @@ class OperationalTelemetryServiceTests(unittest.TestCase):
             operational_service,
             "evaluate_alert_policy",
         ) as alert_evaluator:
+            retry_at = self.environment.repository.get_outbox_event(
+                caught.exception.outbox_event_id
+            ).available_at
             recovered = service.deliver_outbox_event(
                 caught.exception.outbox_event_id,
-                attempted_at=caught.exception.processing_result.telemetry_record.timestamp,
+                attempted_at=retry_at,
             )
             repeated = service.deliver_outbox_event(
                 caught.exception.outbox_event_id,
-                attempted_at=caught.exception.processing_result.telemetry_record.timestamp,
+                attempted_at=retry_at,
             )
         alert_evaluator.assert_not_called()
         self.assertIs(recovered, repeated)

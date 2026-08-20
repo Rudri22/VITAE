@@ -5,18 +5,21 @@ from typing import Any, Mapping, Optional
 try:
     from .alerting import Alert, AlertRepository, evaluate_alert_policy
     from .decision_outbox import (
-        OutboxDeliveryStatus,
         alert_outbox_event_from_candidate,
         decision_record_from_processing_result,
+    )
+    from .outbox_dispatcher import (
+        AlertOutboxDeliveryService,
+        OutboxDeliveryOutcome,
     )
     from .telemetry_processor import ProcessingResult, TelemetryProcessor
 except ImportError:
     from alerting import Alert, AlertRepository, evaluate_alert_policy
     from decision_outbox import (
-        OutboxDeliveryStatus,
         alert_outbox_event_from_candidate,
         decision_record_from_processing_result,
     )
+    from outbox_dispatcher import AlertOutboxDeliveryService, OutboxDeliveryOutcome
     from telemetry_processor import ProcessingResult, TelemetryProcessor
 
 
@@ -53,6 +56,10 @@ class OperationalTelemetryService:
     ):
         self._telemetry_processor = telemetry_processor
         self._alert_repository = alert_repository
+        self._outbox_delivery = AlertOutboxDeliveryService(
+            telemetry_processor.processing_repository,
+            alert_repository,
+        )
 
     def process(self, raw_sample: Mapping[str, Any]) -> OperationalProcessingResult:
         processing_result = self._telemetry_processor.prepare(raw_sample)
@@ -99,39 +106,17 @@ class OperationalTelemetryService:
         attempted_at: datetime,
     ) -> Alert:
         """Deliver the exact stored candidate; never recalculate alert policy."""
-        repository = self._telemetry_processor.processing_repository
-        event = repository.get_outbox_event(event_id)
-        if event is None:
-            raise ValueError("Outbox event does not exist")
-        if event.delivery_status == OutboxDeliveryStatus.DELIVERED:
-            existing = self._alert_repository.get_alert(
-                event.alert_candidate.alert_id
-            )
-            return existing or self._alert_repository.save_alert(
-                event.alert_candidate
-            )
-
-        claimed = repository.claim_outbox_event(
+        result = self._outbox_delivery.deliver(
             event_id,
             worker_id=self._SYNC_WORKER_ID,
-            claimed_at=attempted_at,
+            attempted_at=attempted_at,
             lease_duration=self._SYNC_LEASE,
         )
-        try:
-            alert = self._alert_repository.save_alert(claimed.alert_candidate)
-        except Exception:
-            repository.release_outbox_event(
-                event_id,
-                worker_id=self._SYNC_WORKER_ID,
-                released_at=attempted_at,
-                retry_at=attempted_at,
-                error_code="ALERT_PERSISTENCE_FAILED",
-            )
-            raise
-
-        repository.mark_outbox_delivered(
-            event_id,
-            worker_id=self._SYNC_WORKER_ID,
-            delivered_at=attempted_at,
+        if result.outcome in {
+            OutboxDeliveryOutcome.DELIVERED,
+            OutboxDeliveryOutcome.ALREADY_DELIVERED,
+        }:
+            return result.alert
+        raise RuntimeError(
+            f"Alert delivery deferred with {result.error_code}"
         )
-        return alert

@@ -32,6 +32,7 @@ except ImportError:
 
 
 SCHEMA_VERSION = 1
+ALERT_OUTBOX_EVENT_SCHEMA_VERSION = 2
 
 
 class RepositorySerializationError(ValueError):
@@ -351,17 +352,30 @@ def serialize_alert_outbox_event(value: AlertOutboxEvent) -> dict[str, Any]:
             "last_error_code": _optional_text_value(
                 value.last_error_code, "last_error_code"
             ),
+            "dead_lettered_at": _optional_datetime(
+                value.dead_lettered_at, "dead_lettered_at"
+            ),
+            "dead_lettered_by": _optional_text_value(
+                value.dead_lettered_by, "dead_lettered_by"
+            ),
         },
+        schema_version=ALERT_OUTBOX_EVENT_SCHEMA_VERSION,
     )
 
 
 def deserialize_alert_outbox_event(
     payload: Mapping[str, Any],
 ) -> AlertOutboxEvent:
+    version = _schema_version(payload, "vitae.alert_outbox_event", (1, 2))
     fields = _fields(
         payload,
         "vitae.alert_outbox_event",
-        _ALERT_OUTBOX_EVENT_FIELDS,
+        (
+            _ALERT_OUTBOX_EVENT_V1_FIELDS
+            if version == 1
+            else _ALERT_OUTBOX_EVENT_V2_FIELDS
+        ),
+        supported_versions=(1, 2),
     )
     value = AlertOutboxEvent(
         event_id=_text(fields, "event_id"),
@@ -394,6 +408,20 @@ def deserialize_alert_outbox_event(
         ),
         last_error_code=_optional_text_value(
             fields["last_error_code"], "last_error_code"
+        ),
+        dead_lettered_at=(
+            None
+            if version == 1
+            else _deserialize_optional_datetime(
+                fields["dead_lettered_at"], "dead_lettered_at"
+            )
+        ),
+        dead_lettered_by=(
+            None
+            if version == 1
+            else _optional_text_value(
+                fields["dead_lettered_by"], "dead_lettered_by"
+            )
         ),
     )
     validate_alert_outbox_event(value)
@@ -487,23 +515,44 @@ _SHIPMENT_ACCESS_FIELDS = frozenset(("shipment_id", "lot_trip_id", "organization
 _TELEMETRY_FIELDS = frozenset(("trip_id", "lot_trip_id", "sample_id", "device_id", "timestamp", "temperature", "battery_level", "latitude", "longitude", "device_health"))
 _LIVE_STATE_FIELDS = frozenset(("lot_trip_id", "trip_id", "device_id", "product_id", "product_rule_version", "status", "reason_code", "active_rule_id", "last_sample_id", "last_sample_timestamp", "latest_temperature", "last_updated", "excursion_started_at", "excursion_episode_duration_minutes", "cumulative_excursion_duration_minutes", "excursion_utilization", "revision"))
 _STATUS_DECISION_RECORD_FIELDS = frozenset(("decision_id", "trip_id", "lot_trip_id", "device_id", "sample_id", "sample_timestamp", "product_id", "product_rule_version", "engine_version", "previous_live_state_revision", "resulting_live_state_revision", "status", "reason_code", "active_rule_id", "excursion_started_at", "excursion_episode_duration_minutes", "cumulative_excursion_duration_minutes", "excursion_utilization"))
-_ALERT_OUTBOX_EVENT_FIELDS = frozenset(("event_id", "decision_id", "trip_id", "lot_trip_id", "device_id", "sample_id", "event_type", "alert_policy_version", "alert_candidate", "created_at", "delivery_status", "attempt_count", "available_at", "lease_owner", "lease_expires_at", "delivered_at", "last_error_code"))
+_ALERT_OUTBOX_EVENT_V1_FIELDS = frozenset(("event_id", "decision_id", "trip_id", "lot_trip_id", "device_id", "sample_id", "event_type", "alert_policy_version", "alert_candidate", "created_at", "delivery_status", "attempt_count", "available_at", "lease_owner", "lease_expires_at", "delivered_at", "last_error_code"))
+_ALERT_OUTBOX_EVENT_V2_FIELDS = _ALERT_OUTBOX_EVENT_V1_FIELDS | frozenset(("dead_lettered_at", "dead_lettered_by"))
 _ALERT_ACTION_FIELDS = frozenset(("action_id", "description", "actor_id", "recorded_at"))
 _ALERT_FIELDS = frozenset(("alert_id", "alert_type", "severity", "status", "trip_id", "lot_trip_id", "device_id", "sample_id", "source_status", "reason_code", "active_rule_id", "message", "recommended_action", "detected_at", "updated_at", "acknowledged_by", "acknowledged_at", "actions", "resolved_by", "resolved_at", "resolution_note"))
 
 
-def _document(schema: str, fields: dict[str, Any]) -> dict[str, Any]:
-    return {"schema": schema, "schema_version": SCHEMA_VERSION, **fields}
+def _document(
+    schema: str,
+    fields: dict[str, Any],
+    *,
+    schema_version: int = SCHEMA_VERSION,
+) -> dict[str, Any]:
+    return {"schema": schema, "schema_version": schema_version, **fields}
 
 
-def _fields(payload, schema: str, expected_fields) -> Mapping[str, Any]:
+def _schema_version(payload, schema, supported_versions):
     if not isinstance(payload, Mapping):
         raise RepositorySerializationError("Serialized value must be a mapping")
     if payload.get("schema") != schema:
         raise RepositorySerializationError(f"Expected schema {schema}")
     version = payload.get("schema_version")
-    if isinstance(version, bool) or not isinstance(version, int) or version != SCHEMA_VERSION:
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version not in supported_versions
+    ):
         raise RepositorySerializationError("Unsupported schema version")
+    return version
+
+
+def _fields(
+    payload,
+    schema: str,
+    expected_fields,
+    *,
+    supported_versions=(SCHEMA_VERSION,),
+) -> Mapping[str, Any]:
+    _schema_version(payload, schema, supported_versions)
     actual = set(payload) - {"schema", "schema_version"}
     if actual != set(expected_fields):
         missing = sorted(set(expected_fields) - actual)

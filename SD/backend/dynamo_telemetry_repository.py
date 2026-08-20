@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 from typing import Optional, Tuple
 
 try:
@@ -16,6 +17,7 @@ try:
         AlertOutboxEvent,
         DecisionOutboxError,
         OutboxClaimError,
+        OutboxDiscoveryBatch,
         OutboxDeliveryStatus,
         OutboxTransitionError,
         ProcessingBundleRepository,
@@ -49,6 +51,7 @@ except ImportError:
         AlertOutboxEvent,
         DecisionOutboxError,
         OutboxClaimError,
+        OutboxDiscoveryBatch,
         OutboxDeliveryStatus,
         OutboxTransitionError,
         ProcessingBundleRepository,
@@ -82,18 +85,36 @@ except ImportError:
 _SERIALIZER = TypeSerializer()
 _DESERIALIZER = TypeDeserializer()
 _ABSENT = "attribute_not_exists(PK) AND attribute_not_exists(SK)"
+OUTBOX_WORK_INDEX_NAME = "OutboxWorkIndex"
+OUTBOX_WORK_PARTITION_ATTRIBUTE = "outboxWorkPartition"
+OUTBOX_WORK_SORT_ATTRIBUTE = "outboxWorkSort"
+OUTBOX_WORK_SHARD_COUNT = 16
+_OUTBOX_RECORD_VERSION = "recordVersion"
+_MAX_DISCOVERY_OVERREAD = 4
 
 
 class DynamoTelemetryStateRepository(ProcessingBundleRepository):
     """DynamoDB adapter for atomic telemetry, state, decision, and outbox data."""
 
-    def __init__(self, dynamodb_client, table_name: str, *, key_namespace=""):
+    def __init__(
+        self,
+        dynamodb_client,
+        table_name: str,
+        *,
+        key_namespace="",
+        outbox_work_index_name=OUTBOX_WORK_INDEX_NAME,
+    ):
         if dynamodb_client is None:
             raise ValueError("dynamodb_client is required")
         self.table_name = _required_text(table_name, "table_name")
         namespace = str(key_namespace or "").strip()
         self._key_prefix = f"{namespace}#" if namespace else ""
         self._client = dynamodb_client
+        self._outbox_work_index_name = _required_text(
+            outbox_work_index_name,
+            "outbox_work_index_name",
+        )
+        self._outbox_work_index_validated = False
 
     def get_live_state(self, lot_trip_id: str) -> Optional[LiveState]:
         item = self._get_item(self._live_state_key(lot_trip_id))
@@ -223,35 +244,79 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         if item is None:
             return None
         self._require_item_type(item, "ALERT_OUTBOX_EVENT")
+        self._record_version(item)
         return self._deserialize_outbox(item)
 
     def list_dispatchable_outbox_events(
         self, as_of: datetime
     ) -> Tuple[AlertOutboxEvent, ...]:
+        return self.discover_dispatchable_outbox_events(
+            as_of,
+            limit=1000,
+        ).events
+
+    def discover_dispatchable_outbox_events(
+        self,
+        as_of: datetime,
+        *,
+        limit: int,
+    ) -> OutboxDiscoveryBatch:
         timestamp = _aware_timestamp(as_of, "as_of")
-        events = (
-            self._deserialize_outbox(item)
-            for item in self._query(self._outbox_partition(), "EVENT#")
+        bounded_limit = _positive_integer(limit, "limit")
+        self.validate_outbox_work_index()
+        candidate_keys = self._query_due_outbox_keys(timestamp, bounded_limit)
+        events = []
+        quarantined = 0
+        for key in candidate_keys:
+            item = self._get_item(key)
+            if item is None or item.get("persistenceState") == "QUARANTINED":
+                continue
+            try:
+                self._require_item_type(item, "ALERT_OUTBOX_EVENT")
+                event = self._deserialize_outbox(item)
+            except (StateIntegrityError, TypeError, ValueError):
+                if self._quarantine_corrupt_outbox_item(
+                    item,
+                    quarantined_at=timestamp,
+                    error_code="OUTBOX_RECORD_CORRUPTION",
+                ):
+                    quarantined += 1
+                continue
+            if _is_dispatchable(event, timestamp):
+                events.append(event)
+        events.sort(key=lambda event: (_effective_due_at(event), event.event_id))
+        return OutboxDiscoveryBatch(
+            events=tuple(events[:bounded_limit]),
+            corrupt_quarantined_count=quarantined,
         )
-        dispatchable = (
-            event
-            for event in events
-            if (
-                event.delivery_status == OutboxDeliveryStatus.PENDING
-                and event.available_at <= timestamp
-            )
-            or (
-                event.delivery_status == OutboxDeliveryStatus.IN_FLIGHT
-                and event.lease_expires_at is not None
-                and event.lease_expires_at <= timestamp
-            )
+
+    def validate_outbox_work_index(self):
+        if self._outbox_work_index_validated:
+            return
+        response = self._client.describe_table(TableName=self.table_name)
+        indexes = response.get("Table", {}).get("GlobalSecondaryIndexes", ())
+        index = next(
+            (
+                value
+                for value in indexes
+                if value.get("IndexName") == self._outbox_work_index_name
+            ),
+            None,
         )
-        return tuple(
-            sorted(
-                dispatchable,
-                key=lambda event: (event.available_at, event.event_id),
+        expected_keys = [
+            {"AttributeName": OUTBOX_WORK_PARTITION_ATTRIBUTE, "KeyType": "HASH"},
+            {"AttributeName": OUTBOX_WORK_SORT_ATTRIBUTE, "KeyType": "RANGE"},
+        ]
+        if (
+            index is None
+            or index.get("IndexStatus") != "ACTIVE"
+            or index.get("KeySchema") != expected_keys
+            or index.get("Projection", {}).get("ProjectionType") != "KEYS_ONLY"
+        ):
+            raise StateIntegrityError(
+                "Configured DynamoDB OutboxWorkIndex is unavailable or invalid"
             )
-        )
+        self._outbox_work_index_validated = True
 
     def claim_outbox_event(
         self,
@@ -265,7 +330,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         timestamp = _aware_timestamp(claimed_at, "claimed_at")
         if not isinstance(lease_duration, timedelta) or lease_duration <= timedelta(0):
             raise OutboxClaimError("lease_duration must be positive")
-        event = self._require_outbox_event(event_id)
+        event, record_version = self._require_outbox_event_with_version(event_id)
         available = (
             event.delivery_status == OutboxDeliveryStatus.PENDING
             and event.available_at <= timestamp
@@ -298,6 +363,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
                     ":inFlight": OutboxDeliveryStatus.IN_FLIGHT.value,
                     ":timestamp": _iso(timestamp),
                 },
+                expected_record_version=record_version,
             )
         except ClientError as error:
             if self._is_conditional_failure(error):
@@ -321,7 +387,11 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         error = _required_text(error_code, "error_code")
         if retry < released:
             raise OutboxTransitionError("retry_at cannot predate released_at")
-        event = self._require_owned_lease(event_id, worker, released)
+        event, record_version = self._require_owned_lease(
+            event_id,
+            worker,
+            released,
+        )
         pending = replace(
             event,
             delivery_status=OutboxDeliveryStatus.PENDING,
@@ -335,6 +405,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             event,
             worker,
             released,
+            record_version,
         )
 
     def mark_outbox_delivered(
@@ -346,7 +417,11 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
     ) -> AlertOutboxEvent:
         worker = _required_text(worker_id, "worker_id")
         timestamp = _aware_timestamp(delivered_at, "delivered_at")
-        event = self._require_owned_lease(event_id, worker, timestamp)
+        event, record_version = self._require_owned_lease(
+            event_id,
+            worker,
+            timestamp,
+        )
         delivered = replace(
             event,
             delivery_status=OutboxDeliveryStatus.DELIVERED,
@@ -360,6 +435,41 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             event,
             worker,
             timestamp,
+            record_version,
+        )
+
+    def mark_outbox_dead_letter(
+        self,
+        event_id: str,
+        *,
+        worker_id: str,
+        failed_at: datetime,
+        error_code: str,
+    ) -> AlertOutboxEvent:
+        worker = _required_text(worker_id, "worker_id")
+        timestamp = _aware_timestamp(failed_at, "failed_at")
+        error = _required_text(error_code, "error_code")
+        event, record_version = self._require_owned_lease(
+            event_id,
+            worker,
+            timestamp,
+        )
+        dead_letter = replace(
+            event,
+            delivery_status=OutboxDeliveryStatus.DEAD_LETTER,
+            lease_owner=None,
+            lease_expires_at=None,
+            delivered_at=None,
+            last_error_code=error,
+            dead_lettered_at=timestamp,
+            dead_lettered_by=worker,
+        )
+        return self._conditional_outbox_transition(
+            dead_letter,
+            event,
+            worker,
+            timestamp,
+            record_version,
         )
 
     def _raise_commit_conflict(self, record, new_state, expected_revision, error):
@@ -466,11 +576,12 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             "document": document,
         }
 
-    def _outbox_item(self, event):
+    def _outbox_item(self, event, *, record_version=1):
         document = serialize_alert_outbox_event(event)
-        return {
+        item = {
             **self._outbox_key(event.event_id),
             "entityType": "ALERT_OUTBOX_EVENT",
+            _OUTBOX_RECORD_VERSION: record_version,
             "eventId": event.event_id,
             "decisionId": event.decision_id,
             "lotTripId": event.lot_trip_id,
@@ -483,8 +594,12 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             "leaseExpiresAt": document["lease_expires_at"],
             "deliveredAt": document["delivered_at"],
             "lastErrorCode": event.last_error_code,
+            "deadLetteredAt": document["dead_lettered_at"],
+            "deadLetteredBy": event.dead_lettered_by,
             "document": document,
         }
+        item.update(self._outbox_work_attributes(event))
+        return item
 
     def _live_state_write(self, state, expected_revision):
         item = self._live_state_item(state)
@@ -590,15 +705,26 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             or serialize_alert_outbox_event(event)["delivered_at"]
             != item.get("deliveredAt")
             or event.last_error_code != item.get("lastErrorCode")
+            or serialize_alert_outbox_event(event)["dead_lettered_at"]
+            != item.get("deadLetteredAt")
+            or event.dead_lettered_by != item.get("deadLetteredBy")
         ):
             raise StateIntegrityError(
                 "Persisted AlertOutboxEvent identity is inconsistent"
             )
         return event
 
-    def _update_outbox(self, event, condition, condition_values):
+    def _update_outbox(
+        self,
+        event,
+        condition,
+        condition_values,
+        *,
+        expected_record_version,
+    ):
         validate_alert_outbox_event(event)
-        item = self._outbox_item(event)
+        next_record_version = expected_record_version + 1
+        item = self._outbox_item(event, record_version=next_record_version)
         values = {
             ":document": item["document"],
             ":deliveryStatus": item["deliveryStatus"],
@@ -608,24 +734,58 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             ":leaseExpiresAt": item["leaseExpiresAt"],
             ":deliveredAt": item["deliveredAt"],
             ":lastErrorCode": item["lastErrorCode"],
+            ":deadLetteredAt": item["deadLetteredAt"],
+            ":deadLetteredBy": item["deadLetteredBy"],
+            ":nextRecordVersion": next_record_version,
+            ":expectedRecordVersion": expected_record_version,
             **condition_values,
         }
+        set_expression = (
+            "document = :document, deliveryStatus = :deliveryStatus, "
+            "attemptCount = :attemptCount, availableAt = :availableAt, "
+            "leaseOwner = :leaseOwner, leaseExpiresAt = :leaseExpiresAt, "
+            "deliveredAt = :deliveredAt, lastErrorCode = :lastErrorCode, "
+            "deadLetteredAt = :deadLetteredAt, "
+            "deadLetteredBy = :deadLetteredBy, "
+            "recordVersion = :nextRecordVersion"
+        )
+        work_attributes = self._outbox_work_attributes(event)
+        if work_attributes:
+            values[":outboxWorkPartition"] = work_attributes[
+                OUTBOX_WORK_PARTITION_ATTRIBUTE
+            ]
+            values[":outboxWorkSort"] = work_attributes[
+                OUTBOX_WORK_SORT_ATTRIBUTE
+            ]
+            set_expression += (
+                ", outboxWorkPartition = :outboxWorkPartition, "
+                "outboxWorkSort = :outboxWorkSort"
+            )
+            remove_expression = ""
+        else:
+            remove_expression = (
+                " REMOVE outboxWorkPartition, outboxWorkSort"
+            )
         response = self._client.update_item(
             TableName=self.table_name,
             Key=_marshal(self._outbox_key(event.event_id)),
-            UpdateExpression=(
-                "SET document = :document, deliveryStatus = :deliveryStatus, "
-                "attemptCount = :attemptCount, availableAt = :availableAt, "
-                "leaseOwner = :leaseOwner, leaseExpiresAt = :leaseExpiresAt, "
-                "deliveredAt = :deliveredAt, lastErrorCode = :lastErrorCode"
+            UpdateExpression="SET " + set_expression + remove_expression,
+            ConditionExpression=(
+                f"({condition}) AND recordVersion = :expectedRecordVersion"
             ),
-            ConditionExpression=condition,
             ExpressionAttributeValues=_marshal(values),
             ReturnValues="ALL_NEW",
         )
         return self._deserialize_outbox(_unmarshal(response["Attributes"]))
 
-    def _conditional_outbox_transition(self, next_event, current_event, worker, at):
+    def _conditional_outbox_transition(
+        self,
+        next_event,
+        current_event,
+        worker,
+        at,
+        record_version,
+    ):
         condition = (
             "deliveryStatus = :inFlight AND leaseOwner = :worker "
             "AND leaseExpiresAt > :timestamp AND attemptCount = :expectedAttempts"
@@ -640,6 +800,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
                     ":timestamp": _iso(at),
                     ":expectedAttempts": current_event.attempt_count,
                 },
+                expected_record_version=record_version,
             )
         except ClientError as error:
             if self._is_conditional_failure(error):
@@ -649,13 +810,26 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             raise
 
     def _require_outbox_event(self, event_id):
-        event = self.get_outbox_event(event_id)
-        if event is None:
+        event_and_version = self._get_outbox_event_with_version(event_id)
+        if event_and_version is None:
             raise OutboxTransitionError("Outbox event does not exist")
-        return event
+        return event_and_version[0]
+
+    def _require_outbox_event_with_version(self, event_id):
+        event_and_version = self._get_outbox_event_with_version(event_id)
+        if event_and_version is None:
+            raise OutboxTransitionError("Outbox event does not exist")
+        return event_and_version
+
+    def _get_outbox_event_with_version(self, event_id):
+        item = self._get_item(self._outbox_key(event_id))
+        if item is None:
+            return None
+        self._require_item_type(item, "ALERT_OUTBOX_EVENT")
+        return self._deserialize_outbox(item), self._record_version(item)
 
     def _require_owned_lease(self, event_id, worker_id, timestamp):
-        event = self._require_outbox_event(event_id)
+        event, record_version = self._require_outbox_event_with_version(event_id)
         if (
             event.delivery_status != OutboxDeliveryStatus.IN_FLIGHT
             or event.lease_owner != worker_id
@@ -665,7 +839,156 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             raise OutboxTransitionError(
                 "Outbox event lease is not owned and active"
             )
-        return event
+        return event, record_version
+
+    def _record_version(self, item):
+        value = item.get(_OUTBOX_RECORD_VERSION)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise StateIntegrityError(
+                "Persisted AlertOutboxEvent record version is invalid"
+            )
+        return value
+
+    def _outbox_work_attributes(self, event):
+        if event.delivery_status == OutboxDeliveryStatus.PENDING:
+            category = "OUTBOX_DUE"
+            timestamp = event.available_at
+        elif event.delivery_status == OutboxDeliveryStatus.IN_FLIGHT:
+            category = "OUTBOX_DUE"
+            timestamp = event.lease_expires_at
+        elif event.delivery_status == OutboxDeliveryStatus.DEAD_LETTER:
+            category = "OUTBOX_DEAD"
+            timestamp = event.dead_lettered_at
+        else:
+            return {}
+        shard = _outbox_work_shard(event.event_id)
+        return {
+            OUTBOX_WORK_PARTITION_ATTRIBUTE: self._pk(
+                f"{category}#v1#{shard:02d}"
+            ),
+            OUTBOX_WORK_SORT_ATTRIBUTE: (
+                f"{_work_timestamp(timestamp)}#EVENT#{event.event_id}"
+            ),
+        }
+
+    def _query_due_outbox_keys(self, as_of, limit):
+        cutoff = f"{_work_timestamp(as_of)}#\uffff"
+        max_inspected_per_shard = limit * _MAX_DISCOVERY_OVERREAD
+        candidates = []
+        seen = set()
+        for shard in range(OUTBOX_WORK_SHARD_COUNT):
+            request = {
+                "TableName": self.table_name,
+                "IndexName": self._outbox_work_index_name,
+                "KeyConditionExpression": (
+                    "outboxWorkPartition = :partition "
+                    "AND outboxWorkSort <= :cutoff"
+                ),
+                "ExpressionAttributeValues": _marshal(
+                    {
+                        ":partition": self._pk(
+                            f"OUTBOX_DUE#v1#{shard:02d}"
+                        ),
+                        ":cutoff": cutoff,
+                    }
+                ),
+                "ScanIndexForward": True,
+                "Limit": min(limit, max_inspected_per_shard),
+            }
+            inspected = 0
+            while inspected < max_inspected_per_shard:
+                response = self._client.query(**request)
+                items = tuple(
+                    _unmarshal(item) for item in response.get("Items", ())
+                )
+                inspected += len(items)
+                for item in items:
+                    key_identity = (item.get("PK"), item.get("SK"))
+                    if None in key_identity or key_identity in seen:
+                        continue
+                    seen.add(key_identity)
+                    candidates.append(
+                        (
+                            item.get(OUTBOX_WORK_SORT_ATTRIBUTE, ""),
+                            {"PK": key_identity[0], "SK": key_identity[1]},
+                        )
+                    )
+                last_key = response.get("LastEvaluatedKey")
+                if not last_key:
+                    break
+                request["ExclusiveStartKey"] = last_key
+                request["Limit"] = min(
+                    limit,
+                    max_inspected_per_shard - inspected,
+                )
+        candidates.sort(key=lambda value: (value[0], value[1]["SK"]))
+        return tuple(
+            key for _, key in candidates[: limit * _MAX_DISCOVERY_OVERREAD]
+        )
+
+    def _quarantine_corrupt_outbox_item(
+        self,
+        item,
+        *,
+        quarantined_at,
+        error_code,
+    ):
+        event_id = item.get("eventId")
+        if not isinstance(event_id, str) or not event_id.strip():
+            event_id = str(item.get("SK") or "unknown").removeprefix("EVENT#")
+        shard = _outbox_work_shard(event_id)
+        values = {
+            ":quarantined": "QUARANTINED",
+            ":quarantinedAt": _iso(quarantined_at),
+            ":errorCode": _required_text(error_code, "error_code"),
+            ":workPartition": self._pk(
+                f"OUTBOX_QUARANTINE#v1#{shard:02d}"
+            ),
+            ":workSort": (
+                f"{_work_timestamp(quarantined_at)}#EVENT#{event_id}"
+            ),
+        }
+        conditions = []
+        for attribute, placeholder in (
+            ("entityType", ":observedEntityType"),
+            ("document", ":observedDocument"),
+            (_OUTBOX_RECORD_VERSION, ":observedRecordVersion"),
+        ):
+            if attribute in item:
+                conditions.append(f"{attribute} = {placeholder}")
+                values[placeholder] = item[attribute]
+            else:
+                conditions.append(f"attribute_not_exists({attribute})")
+        record_version = item.get(_OUTBOX_RECORD_VERSION)
+        if (
+            isinstance(record_version, int)
+            and not isinstance(record_version, bool)
+            and record_version > 0
+        ):
+            values[":nextVersion"] = record_version + 1
+        else:
+            values[":nextVersion"] = 1
+        condition = " AND ".join(conditions)
+        try:
+            self._client.update_item(
+                TableName=self.table_name,
+                Key=_marshal({"PK": item["PK"], "SK": item["SK"]}),
+                UpdateExpression=(
+                    "SET persistenceState = :quarantined, "
+                    "quarantinedAt = :quarantinedAt, "
+                    "quarantineErrorCode = :errorCode, "
+                    "recordVersion = :nextVersion, "
+                    "outboxWorkPartition = :workPartition, "
+                    "outboxWorkSort = :workSort"
+                ),
+                ConditionExpression=condition,
+                ExpressionAttributeValues=_marshal(values),
+            )
+            return True
+        except ClientError as error:
+            if self._is_conditional_failure(error):
+                return False
+            raise
 
     def _put(self, item):
         return {
@@ -812,3 +1135,40 @@ def _aware_timestamp(value, field):
 
 def _iso(value):
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _work_timestamp(value):
+    timestamp = _aware_timestamp(value, "outbox work timestamp")
+    return timestamp.astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+
+
+def _outbox_work_shard(event_id):
+    value = _required_text(event_id, "event_id")
+    return int.from_bytes(sha256(value.encode("utf-8")).digest()[:4], "big") % (
+        OUTBOX_WORK_SHARD_COUNT
+    )
+
+
+def _effective_due_at(event):
+    if event.delivery_status == OutboxDeliveryStatus.IN_FLIGHT:
+        return event.lease_expires_at
+    return event.available_at
+
+
+def _is_dispatchable(event, as_of):
+    return (
+        event.delivery_status == OutboxDeliveryStatus.PENDING
+        and event.available_at <= as_of
+    ) or (
+        event.delivery_status == OutboxDeliveryStatus.IN_FLIGHT
+        and event.lease_expires_at is not None
+        and event.lease_expires_at <= as_of
+    )
+
+
+def _positive_integer(value, field):
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return value

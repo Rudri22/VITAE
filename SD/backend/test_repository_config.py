@@ -454,17 +454,37 @@ class DynamoLocalCompositionServiceTests(
             cls.telemetry_table_name,
             cls.alert_table_name,
         ):
+            attributes = [
+                {"AttributeName": "PK", "AttributeType": "S"},
+                {"AttributeName": "SK", "AttributeType": "S"},
+            ]
+            table_options = {}
+            if table_name == cls.telemetry_table_name:
+                attributes.extend(
+                    [
+                        {"AttributeName": "outboxWorkPartition", "AttributeType": "S"},
+                        {"AttributeName": "outboxWorkSort", "AttributeType": "S"},
+                    ]
+                )
+                table_options["GlobalSecondaryIndexes"] = [
+                    {
+                        "IndexName": "OutboxWorkIndex",
+                        "KeySchema": [
+                            {"AttributeName": "outboxWorkPartition", "KeyType": "HASH"},
+                            {"AttributeName": "outboxWorkSort", "KeyType": "RANGE"},
+                        ],
+                        "Projection": {"ProjectionType": "KEYS_ONLY"},
+                    }
+                ]
             cls.client.create_table(
                 TableName=table_name,
                 KeySchema=[
                     {"AttributeName": "PK", "KeyType": "HASH"},
                     {"AttributeName": "SK", "KeyType": "RANGE"},
                 ],
-                AttributeDefinitions=[
-                    {"AttributeName": "PK", "AttributeType": "S"},
-                    {"AttributeName": "SK", "AttributeType": "S"},
-                ],
+                AttributeDefinitions=attributes,
                 BillingMode="PAY_PER_REQUEST",
+                **table_options,
             )
             cls.client.get_waiter("table_exists").wait(TableName=table_name)
 

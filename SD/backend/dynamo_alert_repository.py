@@ -17,6 +17,8 @@ try:
         Alert,
         AlertConflictError,
         AlertError,
+        AlertRepositoryCorruptionError,
+        AlertRepositoryPersistenceError,
         AlertNotFoundError,
         AlertRepository,
         AlertStatus,
@@ -36,6 +38,8 @@ except ImportError:
         Alert,
         AlertConflictError,
         AlertError,
+        AlertRepositoryCorruptionError,
+        AlertRepositoryPersistenceError,
         AlertNotFoundError,
         AlertRepository,
         AlertStatus,
@@ -56,14 +60,6 @@ _SERIALIZER = TypeSerializer()
 _DESERIALIZER = TypeDeserializer()
 _ABSENT = "attribute_not_exists(PK) AND attribute_not_exists(SK)"
 _MAX_UPDATE_ATTEMPTS = 8
-
-
-class AlertRepositoryPersistenceError(AlertError):
-    pass
-
-
-class AlertRepositoryCorruptionError(AlertRepositoryPersistenceError):
-    pass
 
 
 class DynamoAlertRepository(AlertRepository):

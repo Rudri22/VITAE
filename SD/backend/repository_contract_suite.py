@@ -627,6 +627,16 @@ class ProcessingBundleRepositoryContractMixin:
         self.assertEqual(stored, event)
         self.assertEqual(stored.alert_candidate, event.alert_candidate)
 
+    def test_contract_discovery_is_bounded_and_returns_due_events(self):
+        event = contract_alert_outbox_event(self.decision)
+        self.commit_bundle(event)
+        discovery = self.repository.discover_dispatchable_outbox_events(
+            CONTRACT_TIME,
+            limit=1,
+        )
+        self.assertEqual(discovery.events, (event,))
+        self.assertEqual(discovery.corrupt_quarantined_count, 0)
+
     def test_contract_decision_history_preserves_acceptance_order(self):
         self.commit_bundle()
         sample2 = contract_sample(sample_id="contract-sample-2", minutes=5)
@@ -772,6 +782,40 @@ class ProcessingBundleRepositoryContractMixin:
         self.assertEqual(
             self.repository.get_live_state("contract-lot-trip"), self.state
         )
+
+    def test_contract_dead_letter_is_terminal_and_preserves_candidate(self):
+        event = contract_alert_outbox_event(self.decision)
+        self.commit_bundle(event)
+        claimed = self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-a",
+            claimed_at=CONTRACT_TIME,
+            lease_duration=timedelta(minutes=5),
+        )
+        dead = self.repository.mark_outbox_dead_letter(
+            event.event_id,
+            worker_id="worker-a",
+            failed_at=CONTRACT_TIME + timedelta(minutes=1),
+            error_code="ALERT_CREATION_CONFLICT",
+        )
+        self.assertEqual(dead.delivery_status, OutboxDeliveryStatus.DEAD_LETTER)
+        self.assertEqual(dead.alert_candidate, event.alert_candidate)
+        self.assertEqual(dead.attempt_count, claimed.attempt_count)
+        self.assertEqual(dead.dead_lettered_by, "worker-a")
+        self.assertEqual(
+            self.repository.discover_dispatchable_outbox_events(
+                CONTRACT_TIME + timedelta(hours=1),
+                limit=10,
+            ).events,
+            (),
+        )
+        with self.assertRaises(OutboxClaimError):
+            self.repository.claim_outbox_event(
+                event.event_id,
+                worker_id="worker-b",
+                claimed_at=CONTRACT_TIME + timedelta(hours=1),
+                lease_duration=timedelta(minutes=1),
+            )
 
 class AlertRepositoryContractMixin:
     """Reusable behavior suite for every AlertRepository adapter."""

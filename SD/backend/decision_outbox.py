@@ -61,6 +61,7 @@ class OutboxDeliveryStatus(str, Enum):
     PENDING = "PENDING"
     IN_FLIGHT = "IN_FLIGHT"
     DELIVERED = "DELIVERED"
+    DEAD_LETTER = "DEAD_LETTER"
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,14 @@ class AlertOutboxEvent:
     lease_expires_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     last_error_code: Optional[str] = None
+    dead_lettered_at: Optional[datetime] = None
+    dead_lettered_by: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class OutboxDiscoveryBatch:
+    events: Tuple[AlertOutboxEvent, ...]
+    corrupt_quarantined_count: int = 0
 
 
 class DecisionOutboxError(StateIntegrityError):
@@ -124,6 +133,14 @@ class ProcessingBundleRepository(TelemetryStateRepository, Protocol):
     ) -> Tuple[AlertOutboxEvent, ...]:
         ...
 
+    def discover_dispatchable_outbox_events(
+        self,
+        as_of: datetime,
+        *,
+        limit: int,
+    ) -> OutboxDiscoveryBatch:
+        ...
+
     def claim_outbox_event(
         self,
         event_id: str,
@@ -151,6 +168,16 @@ class ProcessingBundleRepository(TelemetryStateRepository, Protocol):
         *,
         worker_id: str,
         delivered_at: datetime,
+    ) -> AlertOutboxEvent:
+        ...
+
+    def mark_outbox_dead_letter(
+        self,
+        event_id: str,
+        *,
+        worker_id: str,
+        failed_at: datetime,
+        error_code: str,
     ) -> AlertOutboxEvent:
         ...
 
@@ -213,6 +240,8 @@ def alert_outbox_event_from_candidate(
         delivery_status=OutboxDeliveryStatus.PENDING,
         attempt_count=0,
         available_at=alert_candidate.detected_at,
+        dead_lettered_at=None,
+        dead_lettered_by=None,
     )
     _validate_outbox_event(value)
     _validate_outbox_matches_decision(value, decision_record)
@@ -305,6 +334,7 @@ class InMemoryProcessingBundleRepository(
         self._decisions_by_id: Dict[str, StatusDecisionRecord] = {}
         self._decision_history: Dict[str, list] = {}
         self._outbox_events: Dict[str, AlertOutboxEvent] = {}
+        self._outbox_record_versions: Dict[str, int] = {}
 
     def commit_processing_bundle(
         self,
@@ -341,6 +371,7 @@ class InMemoryProcessingBundleRepository(
             )
             if alert_outbox_event is not None:
                 self._outbox_events[alert_outbox_event.event_id] = alert_outbox_event
+                self._outbox_record_versions[alert_outbox_event.event_id] = 1
 
     def get_decision(self, decision_id: str) -> Optional[StatusDecisionRecord]:
         with self._lock:
@@ -361,7 +392,19 @@ class InMemoryProcessingBundleRepository(
     def list_dispatchable_outbox_events(
         self, as_of: datetime
     ) -> Tuple[AlertOutboxEvent, ...]:
+        return self.discover_dispatchable_outbox_events(
+            as_of,
+            limit=max(1, len(self._outbox_events)),
+        ).events
+
+    def discover_dispatchable_outbox_events(
+        self,
+        as_of: datetime,
+        *,
+        limit: int,
+    ) -> OutboxDiscoveryBatch:
         timestamp = _aware_timestamp(as_of, "as_of")
+        bounded_limit = _positive_integer(limit, "limit")
         with self._lock:
             events = tuple(self._outbox_events.values())
         dispatchable = (
@@ -377,7 +420,10 @@ class InMemoryProcessingBundleRepository(
                 and event.lease_expires_at <= timestamp
             )
         )
-        return tuple(sorted(dispatchable, key=lambda event: (event.available_at, event.event_id)))
+        ordered = tuple(
+            sorted(dispatchable, key=lambda event: (_effective_due_at(event), event.event_id))
+        )
+        return OutboxDiscoveryBatch(events=ordered[:bounded_limit])
 
     def claim_outbox_event(
         self,
@@ -411,6 +457,7 @@ class InMemoryProcessingBundleRepository(
                 lease_expires_at=timestamp + lease_duration,
             )
             self._outbox_events[event.event_id] = claimed
+            self._increment_outbox_record_version(event.event_id)
             return claimed
 
     def release_outbox_event(
@@ -439,6 +486,7 @@ class InMemoryProcessingBundleRepository(
                 last_error_code=error,
             )
             self._outbox_events[event.event_id] = pending
+            self._increment_outbox_record_version(event.event_id)
             return pending
 
     def mark_outbox_delivered(
@@ -461,7 +509,41 @@ class InMemoryProcessingBundleRepository(
                 last_error_code=None,
             )
             self._outbox_events[event.event_id] = delivered
+            self._increment_outbox_record_version(event.event_id)
             return delivered
+
+    def mark_outbox_dead_letter(
+        self,
+        event_id: str,
+        *,
+        worker_id: str,
+        failed_at: datetime,
+        error_code: str,
+    ) -> AlertOutboxEvent:
+        worker = _required_text(worker_id, "worker_id")
+        timestamp = _aware_timestamp(failed_at, "failed_at")
+        error = _required_text(error_code, "error_code")
+        with self._lock:
+            event = self._require_owned_lease(event_id, worker, timestamp)
+            dead_letter = replace(
+                event,
+                delivery_status=OutboxDeliveryStatus.DEAD_LETTER,
+                lease_owner=None,
+                lease_expires_at=None,
+                delivered_at=None,
+                last_error_code=error,
+                dead_lettered_at=timestamp,
+                dead_lettered_by=worker,
+            )
+            _validate_outbox_event(dead_letter)
+            self._outbox_events[event.event_id] = dead_letter
+            self._increment_outbox_record_version(event.event_id)
+            return dead_letter
+
+    def _increment_outbox_record_version(self, event_id):
+        self._outbox_record_versions[event_id] = (
+            self._outbox_record_versions[event_id] + 1
+        )
 
     def _require_outbox_event(self, event_id):
         normalized = _required_text(event_id, "event_id")
@@ -579,22 +661,55 @@ def _validate_outbox_event(value):
         _aware_timestamp(value.delivered_at, "delivered_at")
         if value.delivered_at < value.created_at:
             raise DecisionOutboxError("delivered_at cannot predate created_at")
+    if value.dead_lettered_at is not None:
+        _aware_timestamp(value.dead_lettered_at, "dead_lettered_at")
+        if value.dead_lettered_at < value.created_at:
+            raise DecisionOutboxError("dead_lettered_at cannot predate created_at")
     if value.delivery_status == OutboxDeliveryStatus.PENDING and (
         value.lease_owner is not None
         or value.lease_expires_at is not None
         or value.delivered_at is not None
+        or value.dead_lettered_at is not None
+        or value.dead_lettered_by is not None
     ):
         raise DecisionOutboxError("PENDING outbox metadata is inconsistent")
     if value.delivery_status == OutboxDeliveryStatus.IN_FLIGHT and (
-        not value.lease_owner or value.lease_expires_at is None or value.delivered_at is not None
+        not value.lease_owner
+        or value.lease_expires_at is None
+        or value.delivered_at is not None
+        or value.dead_lettered_at is not None
+        or value.dead_lettered_by is not None
     ):
         raise DecisionOutboxError("IN_FLIGHT outbox metadata is inconsistent")
     if value.delivery_status == OutboxDeliveryStatus.DELIVERED and (
         value.lease_owner is not None
         or value.lease_expires_at is not None
         or value.delivered_at is None
+        or value.dead_lettered_at is not None
+        or value.dead_lettered_by is not None
     ):
         raise DecisionOutboxError("DELIVERED outbox metadata is inconsistent")
+    if value.delivery_status == OutboxDeliveryStatus.DEAD_LETTER and (
+        value.lease_owner is not None
+        or value.lease_expires_at is not None
+        or value.delivered_at is not None
+        or value.dead_lettered_at is None
+        or not value.dead_lettered_by
+        or not value.last_error_code
+    ):
+        raise DecisionOutboxError("DEAD_LETTER outbox metadata is inconsistent")
+
+
+def _effective_due_at(event):
+    if event.delivery_status == OutboxDeliveryStatus.IN_FLIGHT:
+        return event.lease_expires_at
+    return event.available_at
+
+
+def _positive_integer(value, field):
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return value
 
 
 def _validate_outbox_matches_decision(event, decision):

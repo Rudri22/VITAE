@@ -84,6 +84,14 @@ class AlertConflictError(AlertError):
     pass
 
 
+class AlertRepositoryPersistenceError(AlertError):
+    pass
+
+
+class AlertRepositoryCorruptionError(AlertRepositoryPersistenceError):
+    pass
+
+
 class AlertTransitionError(AlertError):
     pass
 

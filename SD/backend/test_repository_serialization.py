@@ -6,6 +6,7 @@ from datetime import timedelta, timezone
 
 try:
     from .alerting import InMemoryAlertRepository
+    from .decision_outbox import OutboxDeliveryStatus
     from .repository_contract_suite import (
         CONTRACT_TIME,
         contract_alert,
@@ -41,6 +42,7 @@ try:
     from .state_repository import telemetry_record_from_sample
 except ImportError:
     from alerting import InMemoryAlertRepository
+    from decision_outbox import OutboxDeliveryStatus
     from repository_contract_suite import (
         CONTRACT_TIME,
         contract_alert,
@@ -182,6 +184,27 @@ class RepositorySerializationTests(unittest.TestCase):
         )
         self.assertEqual(deserialize_alert(serialize_alert(alert)), alert)
 
+    def test_outbox_v1_document_remains_readable(self):
+        event = contract_alert_outbox_event()
+        document = serialize_alert_outbox_event(event)
+        document["schema_version"] = 1
+        document.pop("dead_lettered_at")
+        document.pop("dead_lettered_by")
+        self.assertEqual(deserialize_alert_outbox_event(document), event)
+
+    def test_dead_letter_outbox_v2_round_trip(self):
+        event = replace(
+            contract_alert_outbox_event(),
+            delivery_status=OutboxDeliveryStatus.DEAD_LETTER,
+            attempt_count=1,
+            last_error_code="ALERT_CREATION_CONFLICT",
+            dead_lettered_at=CONTRACT_TIME + timedelta(minutes=1),
+            dead_lettered_by="worker-a",
+        )
+        document = serialize_alert_outbox_event(event)
+        self.assertEqual(document["schema_version"], 2)
+        self.assertEqual(deserialize_alert_outbox_event(document), event)
+
     def test_every_schema_is_json_serializable_and_versioned(self):
         documents = (
             serialize_trip_identity(self.trip),
@@ -195,7 +218,10 @@ class RepositorySerializationTests(unittest.TestCase):
         )
         for document in documents:
             with self.subTest(schema=document["schema"]):
-                self.assertEqual(document["schema_version"], 1)
+                self.assertEqual(
+                    document["schema_version"],
+                    2 if document["schema"] == "vitae.alert_outbox_event" else 1,
+                )
                 self.assertIsInstance(json.dumps(document), str)
 
     def test_timestamps_are_canonical_utc(self):

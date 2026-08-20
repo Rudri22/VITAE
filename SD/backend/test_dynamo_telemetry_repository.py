@@ -3,6 +3,7 @@ import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import timedelta
 from threading import Barrier
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,8 @@ try:
     from .dynamo_telemetry_repository import (
         DynamoTelemetryStateRepository,
         _marshal,
+        _outbox_work_shard,
+        _unmarshal,
     )
     from .repository_contract_suite import (
         ProcessingBundleRepositoryContractMixin,
@@ -35,7 +38,12 @@ try:
         telemetry_record_from_sample,
     )
 except ImportError:
-    from dynamo_telemetry_repository import DynamoTelemetryStateRepository, _marshal
+    from dynamo_telemetry_repository import (
+        DynamoTelemetryStateRepository,
+        _marshal,
+        _outbox_work_shard,
+        _unmarshal,
+    )
     from repository_contract_suite import (
         ProcessingBundleRepositoryContractMixin,
         TelemetryStateRepositoryContractMixin,
@@ -88,6 +96,18 @@ class DynamoTelemetryLocalMixin:
             AttributeDefinitions=[
                 {"AttributeName": "PK", "AttributeType": "S"},
                 {"AttributeName": "SK", "AttributeType": "S"},
+                {"AttributeName": "outboxWorkPartition", "AttributeType": "S"},
+                {"AttributeName": "outboxWorkSort", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "OutboxWorkIndex",
+                    "KeySchema": [
+                        {"AttributeName": "outboxWorkPartition", "KeyType": "HASH"},
+                        {"AttributeName": "outboxWorkSort", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "KEYS_ONLY"},
+                }
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -263,6 +283,209 @@ class DynamoTelemetryPersistenceTests(DynamoTelemetryLocalMixin, unittest.TestCa
             None,
         )
         self.assertEqual(self._namespace_item_count(), 5)
+
+    def test_outbox_record_version_is_envelope_only_and_increments(self):
+        decision = contract_decision_record(self.sample, self.state)
+        event = contract_alert_outbox_event(decision)
+        self.repository.commit_processing_bundle(
+            self.record, self.state, decision, event, None
+        )
+        key = self.repository._outbox_key(event.event_id)
+
+        def version():
+            raw = self.client.get_item(
+                TableName=self.table_name,
+                Key=_marshal(key),
+                ConsistentRead=True,
+            )["Item"]
+            item = _unmarshal(raw)
+            self.assertNotIn("record_version", item["document"])
+            return item["recordVersion"]
+
+        self.assertEqual(version(), 1)
+        self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-a",
+            claimed_at=event.available_at,
+            lease_duration=timedelta(minutes=5),
+        )
+        self.assertEqual(version(), 2)
+        self.repository.release_outbox_event(
+            event.event_id,
+            worker_id="worker-a",
+            released_at=event.available_at + timedelta(minutes=1),
+            retry_at=event.available_at + timedelta(minutes=2),
+            error_code="ALERT_STORE_UNAVAILABLE",
+        )
+        self.assertEqual(version(), 3)
+        self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-b",
+            claimed_at=event.available_at + timedelta(minutes=2),
+            lease_duration=timedelta(minutes=5),
+        )
+        self.assertEqual(version(), 4)
+        self.repository.mark_outbox_delivered(
+            event.event_id,
+            worker_id="worker-b",
+            delivered_at=event.available_at + timedelta(minutes=3),
+        )
+        self.assertEqual(version(), 5)
+
+    def test_due_discovery_uses_gsi_pagination_and_never_scans(self):
+        decision = contract_decision_record(self.sample, self.state)
+        base = contract_alert_outbox_event(decision)
+        target_shard = _outbox_work_shard(base.event_id)
+        events = [base]
+        suffix = 0
+        while len(events) < 6:
+            candidate = replace(base, event_id=f"page-event-{suffix}")
+            suffix += 1
+            if _outbox_work_shard(candidate.event_id) == target_shard:
+                events.append(candidate)
+        for event in events:
+            self.client.put_item(
+                TableName=self.table_name,
+                Item=_marshal(self.repository._outbox_item(event)),
+            )
+        with patch.object(
+            self.client,
+            "scan",
+            side_effect=AssertionError("outbox discovery must not scan"),
+        ), patch.object(self.client, "query", wraps=self.client.query) as query:
+            discovery = self.repository.discover_dispatchable_outbox_events(
+                base.available_at,
+                limit=1,
+            )
+        self.assertEqual(len(discovery.events), 1)
+        gsi_calls = [
+            call.kwargs
+            for call in query.call_args_list
+            if call.kwargs.get("IndexName") == "OutboxWorkIndex"
+        ]
+        self.assertGreater(len(gsi_calls), 16)
+        self.assertTrue(any("ExclusiveStartKey" in call for call in gsi_calls))
+        self.assertTrue(all("ConsistentRead" not in call for call in gsi_calls))
+
+    def test_dead_letter_moves_from_due_to_dead_index_partition(self):
+        decision = contract_decision_record(self.sample, self.state)
+        event = contract_alert_outbox_event(decision)
+        self.repository.commit_processing_bundle(
+            self.record, self.state, decision, event, None
+        )
+        self.repository.claim_outbox_event(
+            event.event_id,
+            worker_id="worker-a",
+            claimed_at=event.available_at,
+            lease_duration=timedelta(minutes=5),
+        )
+        dead = self.repository.mark_outbox_dead_letter(
+            event.event_id,
+            worker_id="worker-a",
+            failed_at=event.available_at + timedelta(minutes=1),
+            error_code="ALERT_CREATION_CONFLICT",
+        )
+        raw = self.client.get_item(
+            TableName=self.table_name,
+            Key=_marshal(self.repository._outbox_key(event.event_id)),
+            ConsistentRead=True,
+        )["Item"]
+        item = _unmarshal(raw)
+        self.assertEqual(dead.delivery_status.value, "DEAD_LETTER")
+        self.assertIn("#OUTBOX_DEAD#v1#", item["outboxWorkPartition"])
+        self.assertEqual(item["recordVersion"], 3)
+        self.assertEqual(
+            self.repository.discover_dispatchable_outbox_events(
+                event.available_at + timedelta(hours=1),
+                limit=10,
+            ).events,
+            (),
+        )
+
+    def test_corrupt_due_item_is_quarantined_without_rewriting_document(self):
+        decision = contract_decision_record(self.sample, self.state)
+        event = contract_alert_outbox_event(decision)
+        self.repository.commit_processing_bundle(
+            self.record, self.state, decision, event, None
+        )
+        key = self.repository._outbox_key(event.event_id)
+        raw = self.client.get_item(
+            TableName=self.table_name,
+            Key=_marshal(key),
+            ConsistentRead=True,
+        )["Item"]
+        item = _unmarshal(raw)
+        corrupt_document = dict(item["document"])
+        corrupt_document["schema_version"] = 999
+        self.client.update_item(
+            TableName=self.table_name,
+            Key=_marshal(key),
+            UpdateExpression="SET document = :document",
+            ExpressionAttributeValues=_marshal({":document": corrupt_document}),
+        )
+        discovery = self.repository.discover_dispatchable_outbox_events(
+            event.available_at,
+            limit=10,
+        )
+        self.assertEqual(discovery.events, ())
+        self.assertEqual(discovery.corrupt_quarantined_count, 1)
+        quarantined = _unmarshal(
+            self.client.get_item(
+                TableName=self.table_name,
+                Key=_marshal(key),
+                ConsistentRead=True,
+            )["Item"]
+        )
+        self.assertEqual(quarantined["document"], corrupt_document)
+        self.assertEqual(quarantined["persistenceState"], "QUARANTINED")
+        self.assertIn(
+            "#OUTBOX_QUARANTINE#v1#",
+            quarantined["outboxWorkPartition"],
+        )
+        restarted = self.new_repository(self.namespace)
+        self.assertEqual(
+            restarted.discover_dispatchable_outbox_events(
+                event.available_at + timedelta(days=1),
+                limit=10,
+            ).events,
+            (),
+        )
+
+    def test_quarantine_does_not_require_valid_envelope_or_document(self):
+        decision = contract_decision_record(self.sample, self.state)
+        event = contract_alert_outbox_event(decision)
+        self.repository.commit_processing_bundle(
+            self.record, self.state, decision, event, None
+        )
+        key = self.repository._outbox_key(event.event_id)
+        self.client.update_item(
+            TableName=self.table_name,
+            Key=_marshal(key),
+            UpdateExpression=(
+                "SET entityType = :wrong, recordVersion = :wrongVersion "
+                "REMOVE document"
+            ),
+            ExpressionAttributeValues=_marshal(
+                {":wrong": "WRONG_TYPE", ":wrongVersion": "invalid"}
+            ),
+        )
+        discovery = self.repository.discover_dispatchable_outbox_events(
+            event.available_at,
+            limit=10,
+        )
+        self.assertEqual(discovery.events, ())
+        self.assertEqual(discovery.corrupt_quarantined_count, 1)
+        quarantined = _unmarshal(
+            self.client.get_item(
+                TableName=self.table_name,
+                Key=_marshal(key),
+                ConsistentRead=True,
+            )["Item"]
+        )
+        self.assertNotIn("document", quarantined)
+        self.assertEqual(quarantined["entityType"], "WRONG_TYPE")
+        self.assertEqual(quarantined["recordVersion"], 1)
+        self.assertEqual(quarantined["persistenceState"], "QUARANTINED")
 
     def test_bundle_restart_recovers_decision_and_outbox(self):
         decision = contract_decision_record(self.sample, self.state)
@@ -554,6 +777,19 @@ class DynamoDecisionQueryPaginationTests(unittest.TestCase):
         self.assertTrue(
             all(call.kwargs["ConsistentRead"] for call in client.query.call_args_list)
         )
+
+    def test_outbox_discovery_fails_closed_without_expected_gsi(self):
+        client = MagicMock()
+        client.describe_table.return_value = {
+            "Table": {"GlobalSecondaryIndexes": []}
+        }
+        repository = DynamoTelemetryStateRepository(client, "table")
+        with self.assertRaises(StateIntegrityError):
+            repository.discover_dispatchable_outbox_events(
+                contract_alert_outbox_event().available_at,
+                limit=10,
+            )
+        client.query.assert_not_called()
 
 
 if __name__ == "__main__":
