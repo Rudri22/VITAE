@@ -137,6 +137,7 @@ class V2AlertLifecycleHttpTests(unittest.TestCase):
         _, before = self.request(
             "GET",
             "/api/v2/monitor/live/lot-trip-sim-001",
+            headers={"Authorization": "Bearer organization-token"},
         )
         self.command(
             alert_id,
@@ -147,6 +148,7 @@ class V2AlertLifecycleHttpTests(unittest.TestCase):
         status, after = self.request(
             "GET",
             "/api/v2/monitor/live/lot-trip-sim-001",
+            headers={"Authorization": "Bearer organization-token"},
         )
         self.assertEqual(status, 200)
         self.assertEqual(before["openAlertCount"], 1)
@@ -169,6 +171,7 @@ class V2AlertLifecycleHttpTests(unittest.TestCase):
         status, snapshot = self.request(
             "GET",
             "/api/v2/monitor/live/lot-trip-sim-001",
+            headers={"Authorization": "Bearer organization-token"},
         )
         self.assertEqual(status, 200)
         self.assertEqual(snapshot["openAlertCount"], 1)

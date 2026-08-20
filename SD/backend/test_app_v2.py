@@ -55,8 +55,10 @@ except ImportError:
 class _Predictor:
     def __init__(self, result):
         self.result = result
+        self.calls = []
 
     def predict(self, lot_trip_id):
+        self.calls.append(lot_trip_id)
         return self.result
 
 
@@ -119,7 +121,10 @@ class V2SensorDataRouteTests(unittest.TestCase):
         )
 
     def test_product_context_catalog_is_json_safe_and_unauthenticated(self):
-        status, body = self.get_path("/api/v2/catalog/product-contexts")
+        status, body = self.get_path(
+            "/api/v2/catalog/product-contexts",
+            token=None,
+        )
         self.assertEqual(status, 200)
         self.assertEqual(len(body["productContexts"]), 1)
         context = body["productContexts"][0]
@@ -234,6 +239,106 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.assertEqual(alerts["count"], 1)
         self.assertEqual(alerts["alerts"][0]["alertType"], "EXCURSION_MONITOR")
 
+    def test_monitoring_requires_authentication_before_inference(self):
+        predictor = _Predictor(None)
+        monitoring = MonitoringService(
+            self.state_repository,
+            self.state_repository,
+            self.alert_repository,
+            predictor,
+        )
+        trip_before = self.state_repository.get_trip_by_lot_trip_id(
+            "lot-trip-sim-001"
+        )
+        assignments_before = self.state_repository.get_device_assignments(
+            "device-sim-001"
+        )
+        with patch.object(app, "V2_MONITORING_SERVICE", monitoring):
+            responses = [
+                self.get_path(path, token=None)
+                for path in (
+                    "/api/v2/monitor/live/lot-trip-sim-001",
+                    "/api/v2/monitor/alerts/lot-trip-sim-001",
+                )
+            ]
+        for status, body in responses:
+            self.assertEqual(status, 401)
+            self.assertEqual(body, {"error": "Authentication required"})
+            self.assertNotIn("futureRisk", body)
+        self.assertEqual(predictor.calls, [])
+        self.assertEqual(
+            self.state_repository.get_trip_by_lot_trip_id("lot-trip-sim-001"),
+            trip_before,
+        )
+        self.assertEqual(
+            self.state_repository.get_device_assignments("device-sim-001"),
+            assignments_before,
+        )
+
+    def test_monitoring_allows_owning_organization_and_assigned_driver(self):
+        for token in ("organization-token", "driver-token"):
+            with self.subTest(token=token):
+                live_status, body = self.get_path(
+                    "/api/v2/monitor/live/lot-trip-sim-001",
+                    token=token,
+                )
+                alerts_status, alerts = self.get_path(
+                    "/api/v2/monitor/alerts/lot-trip-sim-001",
+                    token=token,
+                )
+                self.assertEqual(live_status, 200)
+                self.assertEqual(body["tripIdentity"]["status"], "ACTIVE")
+                self.assertEqual(body["futureRisk"], {"state": "NOT_CONFIGURED"})
+                self.assertEqual(alerts_status, 200)
+                self.assertEqual(alerts["alerts"], [])
+
+    def test_monitoring_rejects_wrong_organization_and_unassigned_driver(self):
+        organization_status, organization_body = self.get_path(
+            "/api/v2/monitor/live/lot-trip-sim-001",
+            token="hospital-b-token",
+        )
+        unrelated_driver = {
+            "userId": "other-driver-user",
+            "role": "driver",
+            "organizationId": "hospital-a",
+            "driverId": "driver-other",
+        }
+        with patch.object(
+            app,
+            "get_user_by_token",
+            return_value=unrelated_driver,
+        ), patch.object(app, "is_driver_user", return_value=True):
+            driver_status, driver_body = self.get_path(
+                "/api/v2/monitor/live/lot-trip-sim-001",
+                token="other-driver-token",
+            )
+        for status, body in (
+            (organization_status, organization_body),
+            (driver_status, driver_body),
+        ):
+            self.assertEqual(status, 403)
+            self.assertEqual(body["error"]["code"], "MONITOR_ACCESS_DENIED")
+            self.assertNotIn("futureRisk", body)
+
+    def test_admin_and_support_dashboards_remain_available_but_monitor_is_forbidden(self):
+        for token, dashboard in (
+            ("admin-token", "/api/admin/dashboard"),
+            ("support-token", "/api/support/dashboard"),
+        ):
+            with self.subTest(token=token):
+                monitor_status, monitor_body = self.get_path(
+                    "/api/v2/monitor/live/lot-trip-sim-001",
+                    token=token,
+                )
+                dashboard_status, _ = self.get_path(dashboard, token=token)
+                self.assertEqual(monitor_status, 403)
+                self.assertEqual(
+                    monitor_body["error"]["code"],
+                    "MONITOR_ROLE_FORBIDDEN",
+                )
+                self.assertNotIn("futureRisk", monitor_body)
+                self.assertEqual(dashboard_status, 200)
+
     def test_monitoring_routes_return_404_for_unknown_lot_trip(self):
         for path in (
             "/api/v2/monitor/live/not-a-real-lot-trip",
@@ -324,13 +429,14 @@ class V2SensorDataRouteTests(unittest.TestCase):
         connection.close()
         return response.status, payload
 
-    def get_path(self, path):
+    def get_path(self, path, token="organization-token"):
         connection = http.client.HTTPConnection(
             "127.0.0.1",
             self.server.server_port,
             timeout=2,
         )
-        connection.request("GET", path)
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        connection.request("GET", path, headers=headers)
         response = connection.getresponse()
         payload = json.loads(response.read().decode("utf-8"))
         connection.close()

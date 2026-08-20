@@ -660,6 +660,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         return
 
     def handle_v2_monitor_live(self, lot_trip_id):
+        if self.require_v2_monitor_access(lot_trip_id) is None:
+            return
         try:
             snapshot = V2_MONITORING_SERVICE.get_live_snapshot(lot_trip_id)
         except (LotTripNotFoundError, ValueError):
@@ -677,6 +679,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         )
 
     def handle_v2_monitor_alerts(self, lot_trip_id):
+        if self.require_v2_monitor_access(lot_trip_id) is None:
+            return
         try:
             alerts = V2_MONITORING_SERVICE.list_alerts(lot_trip_id)
         except (LotTripNotFoundError, ValueError):
@@ -690,6 +694,53 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "alerts": [serialize_alert(alert) for alert in alerts],
             }
         )
+
+    def require_v2_monitor_access(self, lot_trip_id):
+        user = self.require_authenticated_user()
+        if user is None:
+            return None
+        if not (is_organization_user(user) or is_driver_user(user)):
+            self.send_json(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "MONITOR_ROLE_FORBIDDEN",
+                        "message": "Organization or assigned Driver access is required",
+                    },
+                },
+                status=403,
+            )
+            return None
+        try:
+            access = V2_SHIPMENT_ACCESS_REPOSITORY.get_shipment_access(
+                lot_trip_id
+            )
+        except ValueError:
+            access = None
+        if access is None:
+            self.send_v2_lot_trip_not_found(lot_trip_id)
+            return None
+        allowed = (
+            is_organization_user(user)
+            and user.get("organizationId") == access.organization_id
+        ) or (
+            is_driver_user(user)
+            and user.get("organizationId") == access.organization_id
+            and user.get("driverId") == access.driver_id
+        )
+        if not allowed:
+            self.send_json(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "MONITOR_ACCESS_DENIED",
+                        "message": "You do not have access to this lot trip",
+                    },
+                },
+                status=403,
+            )
+            return None
+        return user
 
     @staticmethod
     def parse_v2_alert_command(path):
