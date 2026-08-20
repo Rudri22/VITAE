@@ -443,38 +443,32 @@ def temporal_risk_targets(examples):
     )
 
 
-def train_logistic_regression_baseline(
-    dataset: TemporalRiskTrainingDataset,
-    policy: TrainingReadinessPolicy = TrainingReadinessPolicy(),
-) -> LogisticBaselineTrainingResult:
-    assessment = assess_training_readiness(dataset, policy)
-    if not assessment.ready:
-        raise TrainingReadinessError(assessment)
+def build_temporal_risk_preprocessor(*, sparse_output=True):
     try:
         from sklearn.compose import ColumnTransformer
         from sklearn.impute import SimpleImputer
-        from sklearn.linear_model import LogisticRegression
         from sklearn.pipeline import Pipeline
         from sklearn.preprocessing import OneHotEncoder, StandardScaler
     except ImportError as error:
         raise TemporalRiskBaselineError(
-            "scikit-learn is required for baseline training"
+            "scikit-learn is required for baseline preprocessing"
         ) from error
-
-    examples = dataset.examples
-    split = assessment.split
-    matrix = temporal_risk_model_inputs(examples)
-    labels = temporal_risk_targets(examples)
     categorical_count = len(TEMPORAL_RISK_CATEGORICAL_FEATURES)
     categorical_indices = list(range(categorical_count))
     numeric_indices = list(
-        range(categorical_count, categorical_count + len(TEMPORAL_RISK_NUMERIC_FEATURES))
+        range(
+            categorical_count,
+            categorical_count + len(TEMPORAL_RISK_NUMERIC_FEATURES),
+        )
     )
-    preprocessor = ColumnTransformer(
+    return ColumnTransformer(
         transformers=(
             (
                 "categorical",
-                OneHotEncoder(handle_unknown="ignore"),
+                OneHotEncoder(
+                    handle_unknown="ignore",
+                    sparse_output=sparse_output,
+                ),
                 categorical_indices,
             ),
             (
@@ -495,6 +489,28 @@ def train_logistic_regression_baseline(
             ),
         )
     )
+
+
+def train_logistic_regression_baseline(
+    dataset: TemporalRiskTrainingDataset,
+    policy: TrainingReadinessPolicy = TrainingReadinessPolicy(),
+) -> LogisticBaselineTrainingResult:
+    assessment = assess_training_readiness(dataset, policy)
+    if not assessment.ready:
+        raise TrainingReadinessError(assessment)
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import Pipeline
+    except ImportError as error:
+        raise TemporalRiskBaselineError(
+            "scikit-learn is required for baseline training"
+        ) from error
+
+    examples = dataset.examples
+    split = assessment.split
+    matrix = temporal_risk_model_inputs(examples)
+    labels = temporal_risk_targets(examples)
+    preprocessor = build_temporal_risk_preprocessor()
     model = Pipeline(
         steps=(
             ("preprocessor", preprocessor),

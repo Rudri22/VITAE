@@ -106,6 +106,7 @@ class SigmoidProbabilityCalibrator:
 @dataclass(frozen=True)
 class TemporalRiskCalibrationAnalysis:
     calibrator: SigmoidProbabilityCalibrator
+    base_model_version: str
     dataset_sha256: str
     calibration_method: str
     calibration_lot_trip_ids: Tuple[str, ...]
@@ -134,18 +135,39 @@ def analyze_temporal_risk_calibration(
     *,
     bootstrap_replicates: int = CALIBRATION_BOOTSTRAP_REPLICATES,
 ) -> TemporalRiskCalibrationAnalysis:
-    source = validate_training_dataset(dataset)
     if not isinstance(training_result, LogisticBaselineTrainingResult):
         raise TemporalRiskCalibrationError(
             "training_result must be LogisticBaselineTrainingResult"
         )
-    if temporal_risk_dataset_fingerprint(source) != training_result.dataset_sha256:
-        raise TemporalRiskCalibrationError(
-            "Training result and calibration dataset fingerprints differ"
-        )
     split = training_result.readiness.split
     if split is None:
         raise TemporalRiskCalibrationError("Training result has no frozen split")
+    return analyze_model_calibration(
+        dataset,
+        model=training_result.model,
+        dataset_sha256=training_result.dataset_sha256,
+        split=split,
+        base_model_version=BASELINE_MODEL_VERSION,
+        bootstrap_replicates=bootstrap_replicates,
+    )
+
+
+def analyze_model_calibration(
+    dataset: TemporalRiskTrainingDataset,
+    *,
+    model,
+    dataset_sha256: str,
+    split,
+    base_model_version: str,
+    bootstrap_replicates: int = CALIBRATION_BOOTSTRAP_REPLICATES,
+) -> TemporalRiskCalibrationAnalysis:
+    source = validate_training_dataset(dataset)
+    if temporal_risk_dataset_fingerprint(source) != dataset_sha256:
+        raise TemporalRiskCalibrationError(
+            "Training result and calibration dataset fingerprints differ"
+        )
+    if not isinstance(base_model_version, str) or not base_model_version.strip():
+        raise TemporalRiskCalibrationError("base_model_version must be non-empty")
     if isinstance(bootstrap_replicates, bool) or not isinstance(
         bootstrap_replicates, int
     ) or bootstrap_replicates < 1:
@@ -155,7 +177,7 @@ def analyze_temporal_risk_calibration(
     matrix = temporal_risk_model_inputs(examples)
     labels = temporal_risk_targets(examples)
     raw_probabilities = tuple(
-        float(value) for value in training_result.model.predict_proba(matrix)[:, 1]
+        float(value) for value in model.predict_proba(matrix)[:, 1]
     )
     calibrator = _fit_sigmoid_calibrator(
         raw_probabilities,
@@ -205,7 +227,8 @@ def analyze_temporal_risk_calibration(
         )
     return TemporalRiskCalibrationAnalysis(
         calibrator=calibrator,
-        dataset_sha256=training_result.dataset_sha256,
+        base_model_version=base_model_version.strip(),
+        dataset_sha256=dataset_sha256,
         calibration_method=CALIBRATION_METHOD,
         calibration_lot_trip_ids=split.validation_lot_trip_ids,
         threshold_analysis_lot_trip_ids=split.validation_lot_trip_ids,
@@ -393,7 +416,7 @@ def persist_calibration_analysis(
         "created_at": timestamp.astimezone(timezone.utc).isoformat().replace(
             "+00:00", "Z"
         ),
-        "base_model_version": BASELINE_MODEL_VERSION,
+        "base_model_version": analysis.base_model_version,
         "dataset_sha256": analysis.dataset_sha256,
         "calibration_method": analysis.calibration_method,
         "calibration_lot_trip_ids": list(analysis.calibration_lot_trip_ids),
