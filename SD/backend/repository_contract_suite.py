@@ -803,6 +803,47 @@ class AlertRepositoryContractMixin:
             self.repository.save_alert(replace(self.alert, message="Different"))
         self.assertEqual(self.repository.get_alert(self.alert.alert_id), self.alert)
 
+    def test_contract_original_candidate_replay_preserves_evolved_lifecycle(self):
+        cases = ("acknowledged", "actioned", "resolved")
+        for index, lifecycle in enumerate(cases):
+            with self.subTest(lifecycle=lifecycle):
+                candidate = replace(
+                    self.alert,
+                    alert_id=f"replay-{index}",
+                    sample_id=f"replay-sample-{index}",
+                )
+                self.repository.save_alert(candidate)
+                timestamp = CONTRACT_TIME + timedelta(minutes=1)
+                if lifecycle == "acknowledged":
+                    evolved = self.repository.acknowledge_alert(
+                        candidate.alert_id,
+                        actor_id="contract-driver",
+                        acknowledged_at=timestamp,
+                    )
+                elif lifecycle == "actioned":
+                    evolved = self.repository.record_action(
+                        candidate.alert_id,
+                        description="Inspected cooling unit",
+                        actor_id="contract-driver",
+                        recorded_at=timestamp,
+                    )
+                else:
+                    evolved = self.repository.resolve_alert(
+                        candidate.alert_id,
+                        actor_id="contract-organization",
+                        resolved_at=timestamp,
+                        resolution_note="Disposition recorded",
+                    )
+                self.assertEqual(self.repository.save_alert(candidate), evolved)
+                self.assertEqual(
+                    self.repository.get_alert(candidate.alert_id),
+                    evolved,
+                )
+                with self.assertRaises(AlertConflictError):
+                    self.repository.save_alert(
+                        replace(candidate, message="Conflicting creation content")
+                    )
+
     def test_contract_acknowledgement_records_actor_and_time(self):
         self.repository.save_alert(self.alert)
         timestamp = CONTRACT_TIME + timedelta(minutes=1)
@@ -825,6 +866,52 @@ class AlertRepositoryContractMixin:
         )
         self.assertEqual(len(updated.actions), 1)
         self.assertEqual(updated.actions[0].description, "Inspected cooling unit")
+
+    def test_contract_action_retry_is_idempotent(self):
+        self.repository.save_alert(self.alert)
+        timestamp = CONTRACT_TIME + timedelta(minutes=1)
+        first = self.repository.record_action(
+            self.alert.alert_id,
+            description="Inspected cooling unit",
+            actor_id="contract-driver",
+            recorded_at=timestamp,
+        )
+        retried = self.repository.record_action(
+            self.alert.alert_id,
+            description="Inspected cooling unit",
+            actor_id="contract-driver",
+            recorded_at=timestamp,
+        )
+        self.assertEqual(retried, first)
+        self.assertEqual(len(retried.actions), 1)
+
+    def test_contract_concurrent_distinct_actions_are_both_preserved(self):
+        self.repository.save_alert(self.alert)
+        barrier = Barrier(2)
+        timestamp = CONTRACT_TIME + timedelta(minutes=1)
+
+        def record(description):
+            barrier.wait()
+            return self.repository.record_action(
+                self.alert.alert_id,
+                description=description,
+                actor_id="contract-driver",
+                recorded_at=timestamp,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = tuple(
+                executor.submit(record, description)
+                for description in ("Checked compressor", "Checked door seal")
+            )
+            for future in futures:
+                future.result()
+
+        stored = self.repository.get_alert(self.alert.alert_id)
+        self.assertCountEqual(
+            (action.description for action in stored.actions),
+            ("Checked compressor", "Checked door seal"),
+        )
 
     def test_contract_resolution_retains_history_and_blocks_changes(self):
         self.repository.save_alert(self.alert)

@@ -212,11 +212,11 @@ class InMemoryAlertRepository(AlertRepository):
         self._lock = RLock()
 
     def save_alert(self, alert: Alert) -> Alert:
-        _validate_alert(alert)
+        validate_new_alert_candidate(alert)
         with self._lock:
             existing = self._alerts.get(alert.alert_id)
             if existing is not None:
-                if existing != alert:
+                if alert_creation_identity(existing) != alert_creation_identity(alert):
                     raise AlertConflictError(
                         "Alert ID is already associated with different content"
                     )
@@ -256,6 +256,10 @@ class InMemoryAlertRepository(AlertRepository):
             if alert.status != AlertStatus.OPEN:
                 raise AlertTransitionError("Only an OPEN alert can be acknowledged")
             _require_not_before_detection(alert, timestamp)
+            if timestamp < alert.updated_at:
+                raise AlertTransitionError(
+                    "Acknowledgement cannot predate alert activity"
+                )
             updated = replace(
                 alert,
                 status=AlertStatus.ACKNOWLEDGED,
@@ -281,14 +285,21 @@ class InMemoryAlertRepository(AlertRepository):
             alert = self._require_alert(alert_id)
             if alert.status == AlertStatus.RESOLVED:
                 raise AlertTransitionError("A RESOLVED alert cannot receive actions")
-            if timestamp < alert.updated_at:
-                raise AlertTransitionError("Alert action cannot predate its current state")
-            action = AlertAction(
-                action_id=_action_id(alert_id, actor, timestamp, action_description),
+            action = build_alert_action(
+                alert_id,
                 description=action_description,
                 actor_id=actor,
                 recorded_at=timestamp,
             )
+            for existing_action in alert.actions:
+                if existing_action.action_id == action.action_id:
+                    if existing_action != action:
+                        raise AlertConflictError(
+                            "Alert action ID is associated with different content"
+                        )
+                    return alert
+            if timestamp < alert.updated_at:
+                raise AlertTransitionError("Alert action cannot predate its current state")
             updated = replace(
                 alert,
                 actions=alert.actions + (action,),
@@ -375,7 +386,66 @@ def _validate_previous_live_state(previous_state, current_state):
         )
 
 
-def _validate_alert(alert):
+def alert_creation_identity(alert: Alert) -> tuple:
+    return (
+        alert.alert_id,
+        alert.alert_type,
+        alert.severity,
+        alert.trip_id,
+        alert.lot_trip_id,
+        alert.device_id,
+        alert.sample_id,
+        alert.source_status,
+        alert.reason_code,
+        alert.active_rule_id,
+        alert.message,
+        alert.recommended_action,
+        alert.detected_at,
+    )
+
+
+def build_alert_action(
+    alert_id: str,
+    *,
+    description: str,
+    actor_id: str,
+    recorded_at: datetime,
+) -> AlertAction:
+    normalized_alert_id = _required_text(alert_id, "alert_id")
+    normalized_description = _required_text(description, "description")
+    normalized_actor = _required_text(actor_id, "actor_id")
+    timestamp = _aware_timestamp(recorded_at, "recorded_at")
+    return AlertAction(
+        action_id=_action_id(
+            normalized_alert_id,
+            normalized_actor,
+            timestamp,
+            normalized_description,
+        ),
+        description=normalized_description,
+        actor_id=normalized_actor,
+        recorded_at=timestamp,
+    )
+
+
+def validate_new_alert_candidate(alert: Alert) -> None:
+    validate_persisted_alert(alert)
+    if (
+        alert.status != AlertStatus.OPEN
+        or alert.updated_at != alert.detected_at
+        or alert.acknowledged_by is not None
+        or alert.acknowledged_at is not None
+        or alert.actions
+        or alert.resolved_by is not None
+        or alert.resolved_at is not None
+        or alert.resolution_note is not None
+    ):
+        raise AlertConflictError("A newly saved alert must be a clean OPEN candidate")
+
+
+def validate_persisted_alert(alert: Alert) -> None:
+    if not isinstance(alert, Alert):
+        raise AlertConflictError("alert must be an Alert")
     for field in (
         "alert_id",
         "trip_id",
@@ -389,8 +459,58 @@ def _validate_alert(alert):
         _required_text(getattr(alert, field), field)
     _aware_timestamp(alert.detected_at, "detected_at")
     _aware_timestamp(alert.updated_at, "updated_at")
-    if alert.status != AlertStatus.OPEN:
-        raise AlertConflictError("A newly saved alert must be OPEN")
+    if alert.updated_at < alert.detected_at:
+        raise AlertTransitionError("Alert update cannot predate detection")
+    if not isinstance(alert.alert_type, AlertType):
+        raise AlertTransitionError("alert_type is invalid")
+    if not isinstance(alert.severity, AlertSeverity):
+        raise AlertTransitionError("severity is invalid")
+    if not isinstance(alert.status, AlertStatus):
+        raise AlertTransitionError("status is invalid")
+    if not isinstance(alert.source_status, ApplicationStatus):
+        raise AlertTransitionError("source_status is invalid")
+
+    acknowledged = alert.acknowledged_by is not None or alert.acknowledged_at is not None
+    if acknowledged:
+        _required_text(alert.acknowledged_by, "acknowledged_by")
+        acknowledged_at = _aware_timestamp(alert.acknowledged_at, "acknowledged_at")
+        _require_not_before_detection(alert, acknowledged_at)
+        if acknowledged_at > alert.updated_at:
+            raise AlertTransitionError("Acknowledgement cannot follow updated_at")
+    if alert.status == AlertStatus.ACKNOWLEDGED and not acknowledged:
+        raise AlertTransitionError("ACKNOWLEDGED alert is missing acknowledgement")
+    if alert.status == AlertStatus.OPEN and acknowledged:
+        raise AlertTransitionError("OPEN alert cannot contain acknowledgement fields")
+
+    action_ids = set()
+    for action in alert.actions:
+        if not isinstance(action, AlertAction):
+            raise AlertTransitionError("actions must contain AlertAction values")
+        _required_text(action.action_id, "action_id")
+        _required_text(action.description, "description")
+        _required_text(action.actor_id, "actor_id")
+        recorded_at = _aware_timestamp(action.recorded_at, "recorded_at")
+        _require_not_before_detection(alert, recorded_at)
+        if recorded_at > alert.updated_at:
+            raise AlertTransitionError("Alert action cannot follow updated_at")
+        if action.action_id in action_ids:
+            raise AlertConflictError("Alert action IDs must be unique")
+        action_ids.add(action.action_id)
+
+    resolved = (
+        alert.resolved_by is not None
+        or alert.resolved_at is not None
+        or alert.resolution_note is not None
+    )
+    if resolved:
+        _required_text(alert.resolved_by, "resolved_by")
+        resolved_at = _aware_timestamp(alert.resolved_at, "resolved_at")
+        _required_text(alert.resolution_note, "resolution_note")
+        _require_not_before_detection(alert, resolved_at)
+        if resolved_at != alert.updated_at:
+            raise AlertTransitionError("Resolution timestamp must equal updated_at")
+    if (alert.status == AlertStatus.RESOLVED) != resolved:
+        raise AlertTransitionError("Alert resolution fields and status do not agree")
 
 
 def _require_not_before_detection(alert, timestamp):
