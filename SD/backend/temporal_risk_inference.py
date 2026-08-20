@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -70,6 +71,14 @@ _MODEL_FILENAME = "model.joblib"
 _CALIBRATOR_FILENAME = "calibrator.joblib"
 _MANIFEST_FILENAME = "inference-manifest.json"
 _MAX_SNAPSHOT_ATTEMPTS = 3
+TEMPORAL_RISK_MODE_ENV = "VITAE_TEMPORAL_RISK_MODE"
+TEMPORAL_RISK_ARTIFACT_DIR_ENV = "VITAE_TEMPORAL_RISK_ARTIFACT_DIR"
+TEMPORAL_RISK_MANIFEST_SHA256_ENV = "VITAE_TEMPORAL_RISK_MANIFEST_SHA256"
+
+
+class TemporalRiskInferenceMode(str, Enum):
+    DISABLED = "disabled"
+    ARTIFACT = "artifact"
 
 
 class TemporalRiskNotPredictedReason(str, Enum):
@@ -79,6 +88,7 @@ class TemporalRiskNotPredictedReason(str, Enum):
     HISTORY_NOT_COHERENT = "HISTORY_NOT_COHERENT"
     CURRENT_STATUS_NOT_ELIGIBLE = "CURRENT_STATUS_NOT_ELIGIBLE"
     CONCURRENT_UPDATE = "CONCURRENT_UPDATE"
+    INFERENCE_UNAVAILABLE = "INFERENCE_UNAVAILABLE"
 
 
 @dataclass(frozen=True)
@@ -130,11 +140,60 @@ class TemporalRiskInferenceArtifactFiles:
     manifest_sha256: str
 
 
+@dataclass(frozen=True)
+class TemporalRiskInferenceConfig:
+    mode: TemporalRiskInferenceMode
+    artifact_directory: Optional[str] = None
+    expected_manifest_sha256: Optional[str] = None
+
+    @classmethod
+    def from_environment(cls, environment=None):
+        values = os.environ if environment is None else environment
+        raw_mode = str(
+            values.get(TEMPORAL_RISK_MODE_ENV, TemporalRiskInferenceMode.DISABLED.value)
+        ).strip().lower()
+        try:
+            mode = TemporalRiskInferenceMode(raw_mode)
+        except ValueError as error:
+            raise TemporalRiskConfigurationError(
+                f"{TEMPORAL_RISK_MODE_ENV} must be disabled or artifact"
+            ) from error
+        artifact_directory = _optional_setting(
+            values, TEMPORAL_RISK_ARTIFACT_DIR_ENV
+        )
+        manifest_hash = _optional_setting(
+            values, TEMPORAL_RISK_MANIFEST_SHA256_ENV
+        )
+        if mode == TemporalRiskInferenceMode.DISABLED:
+            if artifact_directory is not None or manifest_hash is not None:
+                raise TemporalRiskConfigurationError(
+                    "Temporal-risk artifact settings require artifact mode"
+                )
+            return cls(mode=mode)
+        if artifact_directory is None or manifest_hash is None:
+            raise TemporalRiskConfigurationError(
+                "Artifact mode requires artifact directory and trusted manifest hash"
+            )
+        try:
+            _sha256_text(manifest_hash, TEMPORAL_RISK_MANIFEST_SHA256_ENV)
+        except TemporalRiskArtifactError as error:
+            raise TemporalRiskConfigurationError(str(error)) from error
+        return cls(
+            mode=mode,
+            artifact_directory=artifact_directory,
+            expected_manifest_sha256=manifest_hash,
+        )
+
+
 class TemporalRiskInferenceError(ValueError):
     pass
 
 
 class TemporalRiskArtifactError(TemporalRiskInferenceError):
+    pass
+
+
+class TemporalRiskConfigurationError(TemporalRiskInferenceError):
     pass
 
 
@@ -291,6 +350,35 @@ def temporal_risk_inference_service_from_composition(composition, artifact):
         history_repository,
         artifact,
     )
+
+
+def compose_temporal_risk_inference(config, repository_composition):
+    """Build optional inference without changing repository authority."""
+    if not isinstance(config, TemporalRiskInferenceConfig):
+        raise TemporalRiskConfigurationError(
+            "config must be TemporalRiskInferenceConfig"
+        )
+    if config.mode == TemporalRiskInferenceMode.DISABLED:
+        return None
+    if config.mode != TemporalRiskInferenceMode.ARTIFACT:
+        raise TemporalRiskConfigurationError("Unsupported temporal-risk mode")
+    try:
+        artifact = load_temporal_risk_inference_artifact(
+            config.artifact_directory,
+            expected_manifest_sha256=config.expected_manifest_sha256,
+        )
+        return temporal_risk_inference_service_from_composition(
+            repository_composition,
+            artifact,
+        )
+    except TemporalRiskInferenceError as error:
+        raise TemporalRiskConfigurationError(
+            "Configured temporal-risk artifact is invalid"
+        ) from error
+    except Exception as error:
+        raise TemporalRiskConfigurationError(
+            "Unable to configure temporal-risk inference"
+        ) from error
 
 
 def persist_temporal_risk_inference_artifact(
@@ -679,6 +767,14 @@ def _required_text(value, field):
     if not isinstance(value, str) or not value.strip():
         raise TemporalRiskInferenceError(f"{field} must be non-empty")
     return value.strip()
+
+
+def _optional_setting(values, name):
+    value = values.get(name)
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
 def _aware_datetime(value, field):

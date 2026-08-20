@@ -133,7 +133,11 @@ try:
         AlertLifecycleService,
     )
     from .alerting import AlertNotFoundError, AlertTransitionError
-    from .monitoring_service import LotTripNotFoundError, MonitoringService
+    from .monitoring_service import (
+        LotTripNotFoundError,
+        MonitoringService,
+        serialize_future_risk,
+    )
     from .operational_service import OperationalTelemetryService
     from .product_catalog_service import ProductCatalogService
     from .product_rules import (
@@ -157,6 +161,10 @@ try:
         serialize_trip_identity,
     )
     from .telemetry_processor import TelemetryProcessor
+    from .temporal_risk_inference import (
+        TemporalRiskInferenceConfig,
+        compose_temporal_risk_inference,
+    )
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
     from alert_lifecycle_service import (
@@ -166,7 +174,11 @@ except ImportError:
         AlertLifecycleService,
     )
     from alerting import AlertNotFoundError, AlertTransitionError
-    from monitoring_service import LotTripNotFoundError, MonitoringService
+    from monitoring_service import (
+        LotTripNotFoundError,
+        MonitoringService,
+        serialize_future_risk,
+    )
     from operational_service import OperationalTelemetryService
     from product_catalog_service import ProductCatalogService
     from product_rules import (
@@ -190,6 +202,10 @@ except ImportError:
         serialize_trip_identity,
     )
     from telemetry_processor import TelemetryProcessor
+    from temporal_risk_inference import (
+        TemporalRiskInferenceConfig,
+        compose_temporal_risk_inference,
+    )
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
 
@@ -221,6 +237,11 @@ V2_PROTOTYPE_ASSIGNMENT = DeviceAssignment(
 )
 V2_REPOSITORY_CONFIG = RepositoryConfig.from_environment()
 V2_REPOSITORIES = compose_repositories(V2_REPOSITORY_CONFIG)
+V2_TEMPORAL_RISK_CONFIG = TemporalRiskInferenceConfig.from_environment()
+V2_TEMPORAL_RISK_SERVICE = compose_temporal_risk_inference(
+    V2_TEMPORAL_RISK_CONFIG,
+    V2_REPOSITORIES,
+)
 V2_IDENTITY_REPOSITORY = V2_REPOSITORIES.identity_repository
 V2_SHIPMENT_ACCESS_REPOSITORY = V2_REPOSITORIES.shipment_access_repository
 V2_STATE_REPOSITORY = V2_REPOSITORIES.telemetry_state_repository
@@ -251,6 +272,7 @@ V2_MONITORING_SERVICE = MonitoringService(
     V2_IDENTITY_REPOSITORY,
     V2_STATE_REPOSITORY,
     V2_ALERT_REPOSITORY,
+    V2_TEMPORAL_RISK_SERVICE,
 )
 V2_ALERT_LIFECYCLE_SERVICE = AlertLifecycleService(
     V2_ALERT_REPOSITORY,
@@ -650,6 +672,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "liveState": serialize_live_state(snapshot.live_state),
                 "openAlertCount": snapshot.open_alert_count,
                 "latestAlert": serialize_alert(snapshot.latest_alert),
+                "futureRisk": serialize_future_risk(snapshot.future_risk),
             }
         )
 

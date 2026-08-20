@@ -1,5 +1,6 @@
 import inspect
 import unittest
+from typing import Optional
 
 try:
     from . import (
@@ -28,6 +29,7 @@ try:
         sqlite_trip_completion_repository,
     )
     from .alerting import AlertRepository, InMemoryAlertRepository
+    from .monitoring_service import TemporalRiskPredictor
     from .completed_trip_outcome import (
         CompletedTripOutcomeRepository,
         InMemoryCompletedTripOutcomeRepository,
@@ -76,6 +78,7 @@ except ImportError:
     import trip_completion
     import sqlite_trip_completion_repository
     from alerting import AlertRepository, InMemoryAlertRepository
+    from monitoring_service import TemporalRiskPredictor
     from completed_trip_outcome import (
         CompletedTripOutcomeRepository,
         InMemoryCompletedTripOutcomeRepository,
@@ -148,6 +151,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
                 "identity_repository": IdentityRepository,
                 "state_repository": TelemetryStateRepository,
                 "alert_repository": AlertRepository,
+                "future_risk_service": Optional[TemporalRiskPredictor],
             },
             shipment_registration.V2ShipmentRegistrationService: {
                 "identity_repository": shipment_access.IdentityAccessRepository,

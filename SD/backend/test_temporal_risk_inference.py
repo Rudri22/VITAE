@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 
@@ -53,13 +54,20 @@ try:
     )
     from .temporal_risk_inference import (
         SIMULATOR_PERFORMANCE_SCOPE,
+        TEMPORAL_RISK_ARTIFACT_DIR_ENV,
+        TEMPORAL_RISK_MANIFEST_SHA256_ENV,
+        TEMPORAL_RISK_MODE_ENV,
         TemporalRiskArtifactError,
+        TemporalRiskConfigurationError,
         TemporalRiskInferenceArtifact,
+        TemporalRiskInferenceConfig,
+        TemporalRiskInferenceMode,
         TemporalRiskInferenceError,
         TemporalRiskInferenceService,
         TemporalRiskNotPredicted,
         TemporalRiskNotPredictedReason,
         TemporalRiskPrediction,
+        compose_temporal_risk_inference,
         load_temporal_risk_inference_artifact,
         persist_temporal_risk_inference_artifact,
         temporal_risk_prediction_document,
@@ -110,13 +118,20 @@ except ImportError:
     )
     from temporal_risk_inference import (
         SIMULATOR_PERFORMANCE_SCOPE,
+        TEMPORAL_RISK_ARTIFACT_DIR_ENV,
+        TEMPORAL_RISK_MANIFEST_SHA256_ENV,
+        TEMPORAL_RISK_MODE_ENV,
         TemporalRiskArtifactError,
+        TemporalRiskConfigurationError,
         TemporalRiskInferenceArtifact,
+        TemporalRiskInferenceConfig,
+        TemporalRiskInferenceMode,
         TemporalRiskInferenceError,
         TemporalRiskInferenceService,
         TemporalRiskNotPredicted,
         TemporalRiskNotPredictedReason,
         TemporalRiskPrediction,
+        compose_temporal_risk_inference,
         load_temporal_risk_inference_artifact,
         persist_temporal_risk_inference_artifact,
         temporal_risk_prediction_document,
@@ -337,6 +352,31 @@ class TemporalRiskInferenceServiceTests(unittest.TestCase):
         self.assertIsInstance(result, TemporalRiskPrediction)
         self.assertEqual(result.cutoff_at, record.timestamp)
 
+    def test_dynamo_composition_binds_existing_identity_and_history_adapters(self):
+        client = Mock()
+        composition = compose_repositories(
+            RepositoryConfig(
+                mode=RepositoryMode.DYNAMODB,
+                aws_region="us-east-1",
+                identity_table="identity-test",
+                telemetry_table="telemetry-test",
+                alert_table="alert-test",
+            ),
+            dynamodb_client=client,
+        )
+        service = temporal_risk_inference_service_from_composition(
+            composition, _test_artifact()
+        )
+        self.assertIs(
+            service._identity_repository,
+            composition.identity_repository,
+        )
+        self.assertIs(
+            service._history_repository,
+            composition.telemetry_state_repository,
+        )
+        self.assertEqual(client.describe_table.call_count, 2)
+
     def test_missing_inactive_empty_and_ineligible_are_not_predictions(self):
         cases = (
             (
@@ -501,6 +541,65 @@ class TemporalRiskInferenceArtifactTests(unittest.TestCase):
                     directory,
                     expected_manifest_sha256=trusted_hash,
                 )
+
+    def test_default_configuration_is_disabled_and_builds_no_service(self):
+        config = TemporalRiskInferenceConfig.from_environment({})
+        self.assertEqual(
+            config,
+            TemporalRiskInferenceConfig(mode=TemporalRiskInferenceMode.DISABLED),
+        )
+        composition = compose_repositories(
+            RepositoryConfig(mode=RepositoryMode.MEMORY)
+        )
+        self.assertIsNone(compose_temporal_risk_inference(config, composition))
+
+    def test_partial_or_ambiguous_configuration_fails_explicitly(self):
+        cases = (
+            {TEMPORAL_RISK_MODE_ENV: "unknown"},
+            {TEMPORAL_RISK_MODE_ENV: "artifact"},
+            {
+                TEMPORAL_RISK_MODE_ENV: "artifact",
+                TEMPORAL_RISK_ARTIFACT_DIR_ENV: "artifact-dir",
+            },
+            {
+                TEMPORAL_RISK_ARTIFACT_DIR_ENV: "artifact-dir",
+                TEMPORAL_RISK_MANIFEST_SHA256_ENV: "a" * 64,
+            },
+        )
+        for values in cases:
+            with self.subTest(values=values):
+                with self.assertRaises(TemporalRiskConfigurationError):
+                    TemporalRiskInferenceConfig.from_environment(values)
+
+    def test_artifact_configuration_loads_against_memory_composition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            files = self._persist(directory)
+            config = TemporalRiskInferenceConfig.from_environment(
+                {
+                    TEMPORAL_RISK_MODE_ENV: "artifact",
+                    TEMPORAL_RISK_ARTIFACT_DIR_ENV: directory,
+                    TEMPORAL_RISK_MANIFEST_SHA256_ENV: files.manifest_sha256,
+                }
+            )
+            composition = compose_repositories(
+                RepositoryConfig(mode=RepositoryMode.MEMORY)
+            )
+            service = compose_temporal_risk_inference(config, composition)
+        self.assertIsInstance(service, TemporalRiskInferenceService)
+
+    def test_invalid_configured_artifact_is_not_silently_disabled(self):
+        config = TemporalRiskInferenceConfig(
+            mode=TemporalRiskInferenceMode.ARTIFACT,
+            artifact_directory="missing-artifact-directory",
+            expected_manifest_sha256="a" * 64,
+        )
+        composition = compose_repositories(
+            RepositoryConfig(mode=RepositoryMode.MEMORY)
+        )
+        with self.assertRaisesRegex(
+            TemporalRiskConfigurationError, "artifact is invalid"
+        ):
+            compose_temporal_risk_inference(config, composition)
 
 
 if __name__ == "__main__":

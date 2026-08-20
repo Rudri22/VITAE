@@ -2,6 +2,7 @@ import http.client
 import json
 import threading
 import unittest
+from datetime import timedelta
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
@@ -20,6 +21,13 @@ try:
     from .decision_outbox import InMemoryProcessingBundleRepository
     from .telemetry_http import TelemetryHttpAdapter
     from .telemetry_processor import TelemetryProcessor
+    from .temporal_risk_baseline import BASELINE_MODEL_VERSION, TrainingSourceKind
+    from .temporal_risk_calibration import CALIBRATION_METHOD
+    from .temporal_risk_examples import TEMPORAL_RISK_FEATURE_VERSION
+    from .temporal_risk_inference import (
+        SIMULATOR_PERFORMANCE_SCOPE,
+        TemporalRiskPrediction,
+    )
 except ImportError:
     import app
     from alerting import InMemoryAlertRepository
@@ -35,6 +43,21 @@ except ImportError:
     from decision_outbox import InMemoryProcessingBundleRepository
     from telemetry_http import TelemetryHttpAdapter
     from telemetry_processor import TelemetryProcessor
+    from temporal_risk_baseline import BASELINE_MODEL_VERSION, TrainingSourceKind
+    from temporal_risk_calibration import CALIBRATION_METHOD
+    from temporal_risk_examples import TEMPORAL_RISK_FEATURE_VERSION
+    from temporal_risk_inference import (
+        SIMULATOR_PERFORMANCE_SCOPE,
+        TemporalRiskPrediction,
+    )
+
+
+class _Predictor:
+    def __init__(self, result):
+        self.result = result
+
+    def predict(self, lot_trip_id):
+        return self.result
 
 
 class V2SensorDataRouteTests(unittest.TestCase):
@@ -44,6 +67,8 @@ class V2SensorDataRouteTests(unittest.TestCase):
         state_repository.register_device_assignment(app.V2_PROTOTYPE_ASSIGNMENT)
         processor = TelemetryProcessor(state_repository, state_repository)
         alert_repository = InMemoryAlertRepository()
+        self.state_repository = state_repository
+        self.alert_repository = alert_repository
         service = OperationalTelemetryService(
             processor,
             alert_repository,
@@ -173,6 +198,7 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.assertEqual(before["tripIdentity"]["status"], "ACTIVE")
         self.assertEqual(before["openAlertCount"], 0)
         self.assertIsNone(before["latestAlert"])
+        self.assertEqual(before["futureRisk"], {"state": "NOT_CONFIGURED"})
         self.assertEqual(alerts_status, 200)
         self.assertEqual(no_alerts["alerts"], [])
 
@@ -222,6 +248,50 @@ class V2SensorDataRouteTests(unittest.TestCase):
                     body["error"]["lotTripId"],
                     "not-a-real-lot-trip",
                 )
+
+    def test_monitoring_route_serializes_optional_probability_without_status_band(self):
+        self.post(
+            {
+                "sample_id": "route-future-risk",
+                "device_id": "device-sim-001",
+                "timestamp": "2026-08-19T18:00:00Z",
+                "temperature": 6.0,
+            }
+        )
+        state = self.state_repository.get_live_state("lot-trip-sim-001")
+        prediction = TemporalRiskPrediction(
+            prediction_version="temporal-risk-prediction-v1",
+            lot_trip_id="lot-trip-sim-001",
+            trip_id="trip-sim-001",
+            cutoff_sample_id=state.last_sample_id,
+            cutoff_at=state.last_sample_timestamp,
+            horizon_ends_at=state.last_sample_timestamp + timedelta(minutes=30),
+            prediction_horizon_minutes=30,
+            adverse_event_probability=0.17,
+            model_version=BASELINE_MODEL_VERSION,
+            calibration_method=CALIBRATION_METHOD,
+            feature_version=TEMPORAL_RISK_FEATURE_VERSION,
+            artifact_manifest_sha256="a" * 64,
+            training_source_kind=TrainingSourceKind.APPROVED_SIMULATOR,
+            performance_scope=SIMULATOR_PERFORMANCE_SCOPE,
+            limitations=("Simulated-only",),
+        )
+        monitoring = MonitoringService(
+            self.state_repository,
+            self.state_repository,
+            self.alert_repository,
+            _Predictor(prediction),
+        )
+        with patch.object(app, "V2_MONITORING_SERVICE", monitoring):
+            status, body = self.get_path(
+                "/api/v2/monitor/live/lot-trip-sim-001"
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["liveState"]["status"], "SAFE")
+        self.assertEqual(body["futureRisk"]["state"], "PREDICTED")
+        self.assertEqual(body["futureRisk"]["adverseEventProbability"], 0.17)
+        self.assertNotIn("riskPolicy", body["futureRisk"])
+        self.assertNotIn("riskBand", body["futureRisk"])
 
     def test_legacy_sensor_route_remains_admin_authenticated(self):
         status, body = self.post_path(
