@@ -21,6 +21,7 @@ try:
         telemetry_processor,
         temporal_risk_examples,
         temporal_risk_baseline,
+        temporal_risk_calibration,
         trip_completion,
         sqlite_trip_completion_repository,
     )
@@ -62,6 +63,7 @@ except ImportError:
     import telemetry_processor
     import temporal_risk_examples
     import temporal_risk_baseline
+    import temporal_risk_calibration
     import trip_completion
     import sqlite_trip_completion_repository
     from alerting import AlertRepository, InMemoryAlertRepository
@@ -167,6 +169,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             simulated_training_corpus,
             temporal_risk_examples,
             temporal_risk_baseline,
+            temporal_risk_calibration,
         ):
             source = inspect.getsource(module).lower()
             with self.subTest(module=module.__name__):

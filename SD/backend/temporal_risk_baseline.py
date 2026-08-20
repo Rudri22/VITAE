@@ -433,6 +433,16 @@ def equal_trip_sample_weights(
     )
 
 
+def temporal_risk_model_inputs(examples):
+    return tuple(_feature_row(example) for example in examples)
+
+
+def temporal_risk_targets(examples):
+    return tuple(
+        int(example.label.adverse_event_within_horizon) for example in examples
+    )
+
+
 def train_logistic_regression_baseline(
     dataset: TemporalRiskTrainingDataset,
     policy: TrainingReadinessPolicy = TrainingReadinessPolicy(),
@@ -453,8 +463,8 @@ def train_logistic_regression_baseline(
 
     examples = dataset.examples
     split = assessment.split
-    matrix = [_feature_row(example) for example in examples]
-    labels = [int(example.label.adverse_event_within_horizon) for example in examples]
+    matrix = temporal_risk_model_inputs(examples)
+    labels = temporal_risk_targets(examples)
     categorical_count = len(TEMPORAL_RISK_CATEGORICAL_FEATURES)
     categorical_indices = list(range(categorical_count))
     numeric_indices = list(
