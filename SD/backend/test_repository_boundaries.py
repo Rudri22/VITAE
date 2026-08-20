@@ -5,6 +5,7 @@ try:
     from . import (
         alert_lifecycle_service,
         completed_trip_outcome,
+        completed_trip_dataset,
         decision_outbox,
         monitoring_service,
         operational_service,
@@ -25,6 +26,11 @@ try:
         CompletedTripOutcomeRepository,
         InMemoryCompletedTripOutcomeRepository,
     )
+    from .completed_trip_dataset import (
+        CompletedTripDatasetService,
+        CompletedTripHistoryReader,
+        CompletedTripOutcomeReader,
+    )
     from .decision_outbox import (
         InMemoryProcessingBundleRepository,
         ProcessingBundleRepository,
@@ -37,6 +43,7 @@ try:
 except ImportError:
     import alert_lifecycle_service
     import completed_trip_outcome
+    import completed_trip_dataset
     import decision_outbox
     import monitoring_service
     import operational_service
@@ -55,6 +62,11 @@ except ImportError:
     from completed_trip_outcome import (
         CompletedTripOutcomeRepository,
         InMemoryCompletedTripOutcomeRepository,
+    )
+    from completed_trip_dataset import (
+        CompletedTripDatasetService,
+        CompletedTripHistoryReader,
+        CompletedTripOutcomeReader,
     )
     from decision_outbox import (
         InMemoryProcessingBundleRepository,
@@ -94,6 +106,8 @@ class RepositoryBoundaryTests(unittest.TestCase):
         self.assertIsInstance(
             combined_repository, trip_completion.TripCompletionRepository
         )
+        self.assertIsInstance(combined_repository, CompletedTripOutcomeReader)
+        self.assertIsInstance(combined_repository, CompletedTripHistoryReader)
 
     def test_services_depend_on_protocol_annotations(self):
         expected = {
@@ -119,6 +133,10 @@ class RepositoryBoundaryTests(unittest.TestCase):
             alert_lifecycle_service.AlertLifecycleService: {
                 "alert_repository": AlertRepository,
             },
+            CompletedTripDatasetService: {
+                "outcome_repository": CompletedTripOutcomeReader,
+                "history_repository": CompletedTripHistoryReader,
+            },
         }
         for service, annotations in expected.items():
             parameters = inspect.signature(service.__init__).parameters
@@ -133,6 +151,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             repository_serialization,
             decision_outbox,
             completed_trip_outcome,
+            completed_trip_dataset,
             shipment_access,
             sqlite_completed_trip_outcome_repository,
             sqlite_identity_repository,

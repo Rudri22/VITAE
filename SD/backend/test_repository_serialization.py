@@ -6,6 +6,7 @@ from datetime import timedelta, timezone
 
 try:
     from .alerting import InMemoryAlertRepository
+    from .completed_trip_dataset import CompletedTripDatasetRecord
     from .decision_outbox import OutboxDeliveryStatus
     from .repository_contract_suite import (
         CONTRACT_TIME,
@@ -21,6 +22,7 @@ try:
     )
     from .repository_serialization import (
         RepositorySerializationError,
+        deserialize_completed_trip_dataset_record,
         deserialize_completed_trip_outcome,
         deserialize_alert_outbox_event,
         deserialize_alert,
@@ -35,6 +37,7 @@ try:
         serialize_alert_outbox_event,
         serialize_alert_action,
         serialize_completed_trip_outcome,
+        serialize_completed_trip_dataset_record,
         serialize_device_assignment,
         serialize_live_state,
         serialize_shipment_access,
@@ -46,6 +49,7 @@ try:
     from .trip_identity import TripStatus
 except ImportError:
     from alerting import InMemoryAlertRepository
+    from completed_trip_dataset import CompletedTripDatasetRecord
     from decision_outbox import OutboxDeliveryStatus
     from repository_contract_suite import (
         CONTRACT_TIME,
@@ -61,6 +65,7 @@ except ImportError:
     )
     from repository_serialization import (
         RepositorySerializationError,
+        deserialize_completed_trip_dataset_record,
         deserialize_completed_trip_outcome,
         deserialize_alert_outbox_event,
         deserialize_alert,
@@ -75,6 +80,7 @@ except ImportError:
         serialize_alert_outbox_event,
         serialize_alert_action,
         serialize_completed_trip_outcome,
+        serialize_completed_trip_dataset_record,
         serialize_device_assignment,
         serialize_live_state,
         serialize_shipment_access,
@@ -175,6 +181,22 @@ class RepositorySerializationTests(unittest.TestCase):
             outcome,
         )
 
+    def test_completed_trip_dataset_record_round_trip(self):
+        outcome = contract_completed_trip_outcome()
+        decision = contract_decision_record(self.sample, self.state)
+        value = CompletedTripDatasetRecord(
+            lot_trip_id=outcome.lot_trip_id,
+            outcome=outcome,
+            telemetry_records=(self.record,),
+            decision_records=(decision,),
+        )
+        self.assertEqual(
+            deserialize_completed_trip_dataset_record(
+                serialize_completed_trip_dataset_record(value)
+            ),
+            value,
+        )
+
     def test_status_decision_record_round_trip(self):
         decision = contract_decision_record()
         self.assertEqual(
@@ -260,6 +282,16 @@ class RepositorySerializationTests(unittest.TestCase):
             serialize_alert_outbox_event(contract_alert_outbox_event()),
             serialize_alert(contract_alert()),
             serialize_completed_trip_outcome(contract_completed_trip_outcome()),
+            serialize_completed_trip_dataset_record(
+                CompletedTripDatasetRecord(
+                    lot_trip_id=contract_completed_trip_outcome().lot_trip_id,
+                    outcome=contract_completed_trip_outcome(),
+                    telemetry_records=(self.record,),
+                    decision_records=(
+                        contract_decision_record(self.sample, self.state),
+                    ),
+                )
+            ),
         )
         for document in documents:
             with self.subTest(schema=document["schema"]):

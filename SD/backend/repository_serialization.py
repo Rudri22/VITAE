@@ -12,6 +12,11 @@ try:
         validate_alert_outbox_event,
         validate_status_decision_record,
     )
+    from .completed_trip_dataset import (
+        CompletedTripDatasetError,
+        CompletedTripDatasetRecord,
+        validate_completed_trip_dataset_record,
+    )
     from .risk_rules import ApplicationStatus
     from .state_repository import LiveState, TelemetryRecord
     from .shipment_access import ShipmentAccess
@@ -30,6 +35,11 @@ except ImportError:
         StatusDecisionRecord,
         validate_alert_outbox_event,
         validate_status_decision_record,
+    )
+    from completed_trip_dataset import (
+        CompletedTripDatasetError,
+        CompletedTripDatasetRecord,
+        validate_completed_trip_dataset_record,
     )
     from risk_rules import ApplicationStatus
     from state_repository import LiveState, TelemetryRecord
@@ -697,6 +707,61 @@ def deserialize_completed_trip_outcome(
     return validate_completed_trip_outcome(value)
 
 
+def serialize_completed_trip_dataset_record(
+    value: CompletedTripDatasetRecord,
+) -> dict[str, Any]:
+    try:
+        validate_completed_trip_dataset_record(value)
+    except CompletedTripDatasetError as error:
+        raise RepositorySerializationError(str(error)) from error
+    return _document(
+        "vitae.completed_trip_dataset_record",
+        {
+            "lot_trip_id": value.lot_trip_id,
+            "outcome": serialize_completed_trip_outcome(value.outcome),
+            "telemetry_records": [
+                serialize_telemetry_record(record)
+                for record in value.telemetry_records
+            ],
+            "decision_records": [
+                serialize_status_decision_record(record)
+                for record in value.decision_records
+            ],
+        },
+    )
+
+
+def deserialize_completed_trip_dataset_record(
+    payload: Mapping[str, Any],
+) -> CompletedTripDatasetRecord:
+    fields = _fields(
+        payload,
+        "vitae.completed_trip_dataset_record",
+        _COMPLETED_TRIP_DATASET_RECORD_FIELDS,
+    )
+    telemetry_payloads = _document_list(
+        fields["telemetry_records"], "telemetry_records"
+    )
+    decision_payloads = _document_list(
+        fields["decision_records"], "decision_records"
+    )
+    value = CompletedTripDatasetRecord(
+        lot_trip_id=_text(fields, "lot_trip_id"),
+        outcome=deserialize_completed_trip_outcome(fields["outcome"]),
+        telemetry_records=tuple(
+            deserialize_telemetry_record(record) for record in telemetry_payloads
+        ),
+        decision_records=tuple(
+            deserialize_status_decision_record(record)
+            for record in decision_payloads
+        ),
+    )
+    try:
+        return validate_completed_trip_dataset_record(value)
+    except CompletedTripDatasetError as error:
+        raise RepositorySerializationError(str(error)) from error
+
+
 _TRIP_IDENTITY_V1_FIELDS = frozenset(("trip_id", "lot_trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "origin", "destination", "start_time", "status"))
 _TRIP_IDENTITY_V2_FIELDS = _TRIP_IDENTITY_V1_FIELDS | frozenset(("completed_at",))
 _ASSIGNMENT_FIELDS = frozenset(("assignment_id", "device_id", "trip_id", "lot_trip_id", "assigned_at", "active"))
@@ -709,6 +774,7 @@ _ALERT_OUTBOX_EVENT_V2_FIELDS = _ALERT_OUTBOX_EVENT_V1_FIELDS | frozenset(("dead
 _ALERT_ACTION_FIELDS = frozenset(("action_id", "description", "actor_id", "recorded_at"))
 _ALERT_FIELDS = frozenset(("alert_id", "alert_type", "severity", "status", "trip_id", "lot_trip_id", "device_id", "sample_id", "source_status", "reason_code", "active_rule_id", "message", "recommended_action", "detected_at", "updated_at", "acknowledged_by", "acknowledged_at", "actions", "resolved_by", "resolved_at", "resolution_note"))
 _COMPLETED_TRIP_OUTCOME_FIELDS = frozenset(("lot_trip_id", "trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "trip_started_at", "completed_at", "final_status", "final_reason_code", "final_active_rule_id", "final_sample_id", "final_sample_timestamp", "final_temperature", "final_live_state_revision", "final_excursion_episode_duration_minutes", "final_cumulative_excursion_duration_minutes", "final_excursion_utilization"))
+_COMPLETED_TRIP_DATASET_RECORD_FIELDS = frozenset(("lot_trip_id", "outcome", "telemetry_records", "decision_records"))
 
 
 def _document(
@@ -798,6 +864,16 @@ def _non_negative_integer(value, field: str) -> int:
 def _boolean(value, field: str) -> bool:
     if not isinstance(value, bool):
         raise RepositorySerializationError(f"{field} must be a boolean")
+    return value
+
+
+def _document_list(value, field):
+    if not isinstance(value, list) or any(
+        not isinstance(item, Mapping) for item in value
+    ):
+        raise RepositorySerializationError(
+            f"{field} must be a list of serialized documents"
+        )
     return value
 
 
