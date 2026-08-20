@@ -48,6 +48,10 @@ try:
         ShipmentAccessRepository,
     )
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
+    from .trip_completion import (
+        TripCompletionConflictError,
+        TripCompletionRepository,
+    )
 except ImportError:
     from completed_trip_outcome import (
         CompletedTripOutcomeConflictError,
@@ -93,6 +97,7 @@ except ImportError:
         ShipmentAccessRepository,
     )
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
+    from trip_completion import TripCompletionConflictError, TripCompletionRepository
 
 
 CONTRACT_TIME = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
@@ -297,6 +302,108 @@ class CompletedTripOutcomeRepositoryContractMixin:
         self.assertEqual(
             self.repository.get_outcome(self.outcome.lot_trip_id),
             self.outcome,
+        )
+
+
+class TripCompletionRepositoryContractMixin:
+    """Atomic terminal lifecycle contract shared by every storage adapter."""
+
+    def make_trip_completion_repository(self):
+        raise NotImplementedError
+
+    def setUp(self):
+        super().setUp()
+        self.repository = self.make_trip_completion_repository()
+        self.trip = contract_trip()
+        self.assignment = contract_assignment()
+        self.repository.register_trip_and_assignment(self.trip, self.assignment)
+        self.active_trip, self.active_assignment = (
+            self.repository.transition_trip_and_assignment(
+                self.trip.trip_id,
+                self.assignment.assignment_id,
+                TripStatus.PLANNED,
+                TripStatus.ACTIVE,
+                False,
+                True,
+            )
+        )
+        self.completed_at = CONTRACT_TIME + timedelta(hours=1)
+
+    def test_completion_contract_runtime_protocol(self):
+        self.assertIsInstance(self.repository, TripCompletionRepository)
+
+    def test_completion_contract_no_telemetry_is_atomic_and_idempotent(self):
+        result = self.repository.complete_trip(
+            self.trip.trip_id,
+            self.assignment.assignment_id,
+            completed_at=self.completed_at,
+        )
+        self.assertEqual(result.trip.status, TripStatus.COMPLETED)
+        self.assertEqual(result.trip.completed_at, self.completed_at)
+        self.assertFalse(result.assignment.active)
+        self.assertIsNone(result.final_live_state)
+        self.assertIsNone(result.outcome.final_status)
+        self.assertEqual(
+            self.repository.get_completed_trip_outcome(self.trip.lot_trip_id),
+            result.outcome,
+        )
+        self.assertEqual(
+            self.repository.complete_trip(
+                self.trip.trip_id,
+                self.assignment.assignment_id,
+                completed_at=self.completed_at,
+            ),
+            result,
+        )
+
+    def test_completion_contract_captures_exact_final_live_state(self):
+        sample = contract_sample(minutes=5)
+        record = telemetry_record_from_sample(
+            self.active_trip.trip_id, self.active_trip.lot_trip_id, sample
+        )
+        state = contract_state(sample)
+        self.repository.commit_sample_and_state(record, state, None)
+        result = self.repository.complete_trip(
+            self.trip.trip_id,
+            self.assignment.assignment_id,
+            completed_at=self.completed_at,
+        )
+        self.assertEqual(result.final_live_state, state)
+        self.assertEqual(result.outcome.final_live_state_revision, state.revision)
+        self.assertEqual(result.outcome.final_sample_id, sample.sample_id)
+
+    def test_completion_contract_conflicting_timestamp_is_rejected(self):
+        result = self.repository.complete_trip(
+            self.trip.trip_id,
+            self.assignment.assignment_id,
+            completed_at=self.completed_at,
+        )
+        with self.assertRaises(TripCompletionConflictError):
+            self.repository.complete_trip(
+                self.trip.trip_id,
+                self.assignment.assignment_id,
+                completed_at=self.completed_at + timedelta(seconds=1),
+            )
+        self.assertEqual(
+            self.repository.get_completed_trip_outcome(self.trip.lot_trip_id),
+            result.outcome,
+        )
+
+    def test_completion_contract_validation_failure_writes_nothing(self):
+        with self.assertRaises(ValueError):
+            self.repository.complete_trip(
+                self.trip.trip_id,
+                self.assignment.assignment_id,
+                completed_at=self.active_trip.start_time.replace(tzinfo=None),
+            )
+        self.assertEqual(
+            self.repository.get_trip_by_id(self.trip.trip_id), self.active_trip
+        )
+        self.assertTrue(
+            self.repository.get_device_assignments(self.trip.device_id)[0].active
+        )
+        self.assertIsNone(
+            self.repository.get_completed_trip_outcome(self.trip.lot_trip_id)
         )
 
 

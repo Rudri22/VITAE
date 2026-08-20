@@ -17,6 +17,8 @@ try:
         shipment_lifecycle,
         shipment_registration,
         telemetry_processor,
+        trip_completion,
+        sqlite_trip_completion_repository,
     )
     from .alerting import AlertRepository, InMemoryAlertRepository
     from .completed_trip_outcome import (
@@ -47,6 +49,8 @@ except ImportError:
     import shipment_lifecycle
     import shipment_registration
     import telemetry_processor
+    import trip_completion
+    import sqlite_trip_completion_repository
     from alerting import AlertRepository, InMemoryAlertRepository
     from completed_trip_outcome import (
         CompletedTripOutcomeRepository,
@@ -87,6 +91,9 @@ class RepositoryBoundaryTests(unittest.TestCase):
         )
         self.assertIsInstance(combined_repository, TelemetryStateRepository)
         self.assertIsInstance(combined_repository, ProcessingBundleRepository)
+        self.assertIsInstance(
+            combined_repository, trip_completion.TripCompletionRepository
+        )
 
     def test_services_depend_on_protocol_annotations(self):
         expected = {
@@ -129,6 +136,8 @@ class RepositoryBoundaryTests(unittest.TestCase):
             sqlite_completed_trip_outcome_repository,
             sqlite_identity_repository,
             sqlite_telemetry_repository,
+            trip_completion,
+            sqlite_trip_completion_repository,
         ):
             source = inspect.getsource(module).lower()
             with self.subTest(module=module.__name__):

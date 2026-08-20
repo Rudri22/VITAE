@@ -1,15 +1,41 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import RLock
 from typing import Dict, Optional, Protocol, Tuple, runtime_checkable
 
 try:
+    from .completed_trip_outcome import completed_trip_outcome_from_state
     from .decision_outbox import InMemoryProcessingBundleRepository
     from .state_repository import IdentityRepository
-    from .trip_identity import DeviceAssignment, TripIdentity
+    from .trip_completion import (
+        TripCompletionConflictError,
+        TripCompletionIntegrityError,
+        TripCompletionRepository,
+        TripCompletionResult,
+        completed_trip_replay_result,
+    )
+    from .trip_identity import (
+        DeviceAssignment,
+        TripIdentity,
+        TripStatus,
+        trip_identity_with_status,
+    )
 except ImportError:
+    from completed_trip_outcome import completed_trip_outcome_from_state
     from decision_outbox import InMemoryProcessingBundleRepository
     from state_repository import IdentityRepository
-    from trip_identity import DeviceAssignment, TripIdentity
+    from trip_completion import (
+        TripCompletionConflictError,
+        TripCompletionIntegrityError,
+        TripCompletionRepository,
+        TripCompletionResult,
+        completed_trip_replay_result,
+    )
+    from trip_identity import (
+        DeviceAssignment,
+        TripIdentity,
+        TripStatus,
+        trip_identity_with_status,
+    )
 
 
 @dataclass(frozen=True)
@@ -180,12 +206,84 @@ class InMemoryShipmentAccessRepository(ShipmentAccessRepository):
 class InMemoryIdentityAccessRepository(
     InMemoryProcessingBundleRepository,
     InMemoryShipmentAccessRepository,
+    TripCompletionRepository,
 ):
     """Atomic in-memory identity, telemetry-state, and access composition."""
 
     def __init__(self):
         InMemoryProcessingBundleRepository.__init__(self)
         InMemoryShipmentAccessRepository.__init__(self)
+        self._completed_trip_outcomes = {}
+
+    def complete_trip(
+        self,
+        trip_id: str,
+        assignment_id: str,
+        *,
+        completed_at,
+    ) -> TripCompletionResult:
+        with self._lock:
+            trip = self._trips_by_id.get(_required_text(trip_id, "trip_id"))
+            assignment = self._assignments_by_id.get(
+                _required_text(assignment_id, "assignment_id")
+            )
+            if trip is None or assignment is None:
+                raise TripCompletionIntegrityError(
+                    "Trip completion identity does not exist"
+                )
+            if (
+                assignment.trip_id != trip.trip_id
+                or assignment.lot_trip_id != trip.lot_trip_id
+                or assignment.device_id != trip.device_id
+            ):
+                raise TripCompletionIntegrityError(
+                    "Trip completion identity is inconsistent"
+                )
+            state = self._live_states.get(trip.lot_trip_id)
+            existing = self._completed_trip_outcomes.get(trip.lot_trip_id)
+            if trip.status == TripStatus.COMPLETED:
+                return completed_trip_replay_result(
+                    trip, assignment, state, existing, completed_at
+                )
+            if trip.status != TripStatus.ACTIVE or not assignment.active:
+                raise TripCompletionConflictError(
+                    "Only an ACTIVE trip with an active assignment can complete"
+                )
+            if existing is not None:
+                raise TripCompletionIntegrityError(
+                    "An outcome exists before the trip is completed"
+                )
+
+            next_trip = trip_identity_with_status(
+                trip, TripStatus.COMPLETED, completed_at=completed_at
+            )
+            next_assignment = replace(assignment, active=False)
+            outcome = completed_trip_outcome_from_state(
+                next_trip, next_trip.completed_at, state
+            )
+            result = TripCompletionResult(
+                trip=next_trip,
+                assignment=next_assignment,
+                final_live_state=state,
+                outcome=outcome,
+            )
+            self._trips_by_id[next_trip.trip_id] = next_trip
+            self._trips_by_lot_trip_id[next_trip.lot_trip_id] = next_trip
+            self._assignments_by_id[next_assignment.assignment_id] = next_assignment
+            self._assignments_by_device[next_assignment.device_id] = [
+                next_assignment
+                if item.assignment_id == next_assignment.assignment_id
+                else item
+                for item in self._assignments_by_device[next_assignment.device_id]
+            ]
+            self._completed_trip_outcomes[next_trip.lot_trip_id] = outcome
+            return result
+
+    def get_completed_trip_outcome(self, lot_trip_id):
+        with self._lock:
+            return self._completed_trip_outcomes.get(
+                _required_text(lot_trip_id, "lot_trip_id")
+            )
 
     def register_trip_assignment_and_access(
         self,
