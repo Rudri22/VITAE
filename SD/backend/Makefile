@@ -15,6 +15,5 @@ WORKER_MODULES = \
 	trip_identity.py
 
 build-OutboxWorkerFunction:
-	mkdir -p "$(ARTIFACTS_DIR)"
-	cp $(WORKER_MODULES) "$(ARTIFACTS_DIR)"
+	python -c "import pathlib, shutil, sys; target = pathlib.Path(sys.argv[1]); target.mkdir(parents=True, exist_ok=True); [shutil.copy2(source, target / pathlib.Path(source).name) for source in sys.argv[2:]]" "$(ARTIFACTS_DIR)" $(WORKER_MODULES)
 	python -m pip install --requirement requirements-worker.txt --target "$(ARTIFACTS_DIR)"
