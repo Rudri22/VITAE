@@ -11,6 +11,7 @@ try:
         repository_contract_suite,
         repository_serialization,
         shipment_access,
+        sqlite_completed_trip_outcome_repository,
         sqlite_identity_repository,
         shipment_lifecycle,
         shipment_registration,
@@ -39,6 +40,7 @@ except ImportError:
     import repository_contract_suite
     import repository_serialization
     import shipment_access
+    import sqlite_completed_trip_outcome_repository
     import sqlite_identity_repository
     import shipment_lifecycle
     import shipment_registration
@@ -122,6 +124,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             decision_outbox,
             completed_trip_outcome,
             shipment_access,
+            sqlite_completed_trip_outcome_repository,
             sqlite_identity_repository,
         ):
             source = inspect.getsource(module).lower()

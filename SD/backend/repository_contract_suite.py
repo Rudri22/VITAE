@@ -280,7 +280,7 @@ class CompletedTripOutcomeRepositoryContractMixin:
     def test_contract_identical_save_is_idempotent(self):
         first = self.repository.save_outcome(self.outcome)
         second = self.repository.save_outcome(self.outcome)
-        self.assertIs(first, second)
+        self.assertEqual(first, second)
 
     def test_contract_conflicting_rewrite_is_rejected(self):
         self.repository.save_outcome(self.outcome)
