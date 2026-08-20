@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, Mapping
+from datetime import datetime
+from typing import Any, Mapping, Optional
 
 try:
     from .state_repository import IdentityRepository
@@ -38,6 +39,7 @@ class V2ShipmentLifecycleService:
     def complete_for_shipment(
         self,
         shipment: Mapping[str, Any],
+        completed_at: datetime,
     ) -> V2LifecycleTransition:
         return self._transition(
             shipment,
@@ -45,6 +47,7 @@ class V2ShipmentLifecycleService:
             TripStatus.COMPLETED,
             True,
             False,
+            completed_at=completed_at,
         )
 
     def rollback_activation(
@@ -78,6 +81,8 @@ class V2ShipmentLifecycleService:
         next_status: TripStatus,
         expected_active: bool,
         next_active: bool,
+        *,
+        completed_at: Optional[datetime] = None,
     ) -> V2LifecycleTransition:
         trip_id = _required(shipment, "tripId")
         lot_trip_id = _required(shipment, "lotTripId")
@@ -95,6 +100,7 @@ class V2ShipmentLifecycleService:
                 next_status,
                 expected_active,
                 next_active,
+                completed_at,
             )
         )
         return V2LifecycleTransition(next_trip, next_assignment)

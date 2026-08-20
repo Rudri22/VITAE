@@ -1,7 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 try:
     from .product_rules import resolve_applicable_rules
@@ -32,6 +32,7 @@ class TripIdentity:
     destination: str
     start_time: datetime
     status: TripStatus
+    completed_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -152,7 +153,41 @@ def validate_trip_identity(trip: TripIdentity) -> TripIdentity:
         raise TripIdentityValidationError("Trip status is invalid")
     if not _is_timezone_aware(trip.start_time):
         raise TripIdentityValidationError("Trip start_time must be timezone-aware")
+    if trip.status == TripStatus.COMPLETED:
+        if not _is_timezone_aware(trip.completed_at):
+            raise TripIdentityValidationError(
+                "A COMPLETED trip must have a timezone-aware completed_at"
+            )
+        if trip.completed_at < trip.start_time:
+            raise TripIdentityValidationError(
+                "Trip completed_at cannot precede start_time"
+            )
+    elif trip.completed_at is not None:
+        raise TripIdentityValidationError(
+            "Only a COMPLETED trip may have completed_at"
+        )
     return trip
+
+
+def trip_identity_with_status(
+    trip: TripIdentity,
+    status: TripStatus,
+    *,
+    completed_at: Optional[datetime] = None,
+) -> TripIdentity:
+    """Create a validated lifecycle snapshot without consulting a clock."""
+    if not isinstance(status, TripStatus):
+        raise TripIdentityValidationError("Trip status is invalid")
+    if status != TripStatus.COMPLETED and completed_at is not None:
+        raise TripIdentityValidationError(
+            "Only a COMPLETED trip transition may supply completed_at"
+        )
+    next_trip = replace(
+        trip,
+        status=status,
+        completed_at=completed_at if status == TripStatus.COMPLETED else None,
+    )
+    return validate_trip_identity(next_trip)
 
 
 def validate_device_assignment(

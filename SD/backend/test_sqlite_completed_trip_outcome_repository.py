@@ -125,7 +125,10 @@ class SQLiteCompletedOutcomePersistenceTests(unittest.TestCase):
 
     def test_no_telemetry_outcome_preserves_null_final_state(self):
         no_telemetry = completed_trip_outcome_from_state(
-            contract_trip(status=TripStatus.COMPLETED),
+            contract_trip(
+                status=TripStatus.COMPLETED,
+                completed_at=CONTRACT_TIME + timedelta(minutes=30),
+            ),
             CONTRACT_TIME + timedelta(minutes=30),
             None,
         )

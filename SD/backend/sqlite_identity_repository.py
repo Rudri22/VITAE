@@ -2,6 +2,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -26,6 +27,7 @@ try:
         DeviceAssignment,
         TripIdentity,
         TripStatus,
+        trip_identity_with_status,
         validate_device_assignment,
         validate_trip_identity,
     )
@@ -50,6 +52,7 @@ except ImportError:
         DeviceAssignment,
         TripIdentity,
         TripStatus,
+        trip_identity_with_status,
         validate_device_assignment,
         validate_trip_identity,
     )
@@ -131,6 +134,7 @@ class SQLiteIdentityAccessRepository(IdentityAccessRepository):
         next_trip_status: TripStatus,
         expected_assignment_active: bool,
         next_assignment_active: bool,
+        completed_at: Optional[datetime] = None,
     ) -> Tuple[TripIdentity, DeviceAssignment]:
         with self._write_transaction() as connection:
             trip = self._read_trip_by_id(connection, trip_id)
@@ -150,7 +154,11 @@ class SQLiteIdentityAccessRepository(IdentityAccessRepository):
                     "Only an ACTIVE trip may have an active device assignment"
                 )
 
-            next_trip = replace(trip, status=next_trip_status)
+            next_trip = trip_identity_with_status(
+                trip,
+                next_trip_status,
+                completed_at=completed_at,
+            )
             next_assignment = replace(assignment, active=next_assignment_active)
             validate_trip_identity(next_trip)
             validate_device_assignment(

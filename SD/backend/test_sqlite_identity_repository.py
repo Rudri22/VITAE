@@ -4,6 +4,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from threading import Barrier
 
@@ -248,10 +249,20 @@ class SQLiteIdentityPersistenceTests(unittest.TestCase):
                 TripStatus.COMPLETED,
                 True,
                 False,
+                trip.start_time + timedelta(hours=1),
             )
         )
         self.assertEqual(completed_trip.status, TripStatus.COMPLETED)
+        self.assertEqual(
+            completed_trip.completed_at,
+            trip.start_time + timedelta(hours=1),
+        )
         self.assertFalse(completed_assignment.active)
+        restarted = SQLiteIdentityAccessRepository(self.path)
+        self.assertEqual(
+            restarted.get_trip_by_id(trip.trip_id).completed_at,
+            trip.start_time + timedelta(hours=1),
+        )
 
         next_trip = replace(
             contract_trip(),

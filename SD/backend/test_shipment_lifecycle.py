@@ -1,5 +1,6 @@
 import unittest
 from copy import deepcopy
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 try:
@@ -122,6 +123,20 @@ class V2ShipmentLifecycleTests(unittest.TestCase):
         self.assertEqual(trip.status, TripStatus.COMPLETED)
         self.assertFalse(assignment.active)
 
+    def test_completion_uses_one_authoritative_timestamp(self):
+        shipment = self.create_and_accept()
+        self.start(shipment["shipmentId"])
+        timestamp = "2026-08-20T10:15:00Z"
+        with patch.object(storage_module, "now_iso", return_value=timestamp) as clock:
+            completed = self.complete(shipment["shipmentId"])
+        trip = self.repository.get_trip_by_id(shipment["tripId"])
+        self.assertEqual(
+            trip.completed_at,
+            datetime(2026, 8, 20, 10, 15, tzinfo=timezone.utc),
+        )
+        self.assertEqual(completed["arrivalTime"], timestamp)
+        clock.assert_called_once_with()
+
     def test_failed_legacy_start_compensates_v2_transition(self):
         shipment = self.create_and_accept()
         shipment_before = deepcopy(SHIPMENTS[shipment["shipmentId"]])
@@ -158,6 +173,9 @@ class V2ShipmentLifecycleTests(unittest.TestCase):
         self.assertEqual(
             self.repository.get_trip_by_id(shipment["tripId"]).status,
             TripStatus.ACTIVE,
+        )
+        self.assertIsNone(
+            self.repository.get_trip_by_id(shipment["tripId"]).completed_at
         )
         self.assertTrue(self.assignment(shipment["sensorId"]).active)
 

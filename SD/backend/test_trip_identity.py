@@ -1,6 +1,6 @@
 import unittest
 from dataclasses import FrozenInstanceError, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 try:
     from .product_rules import (
@@ -23,6 +23,7 @@ try:
         TripStatus,
         UnknownDeviceError,
         resolve_trip_for_device,
+        validate_trip_identity,
         validate_trip_rule_context,
     )
 except ImportError:
@@ -46,6 +47,7 @@ except ImportError:
         TripStatus,
         UnknownDeviceError,
         resolve_trip_for_device,
+        validate_trip_identity,
         validate_trip_rule_context,
     )
 
@@ -156,6 +158,64 @@ class TripIdentityTests(unittest.TestCase):
                 (assignment(),),
             )
 
+    def test_completed_trip_requires_aware_completed_at(self):
+        completed_at = START_TIME + timedelta(hours=1)
+        self.assertEqual(
+            validate_trip_identity(
+                gardasil_trip(
+                    status=TripStatus.COMPLETED,
+                    completed_at=completed_at,
+                )
+            ).completed_at,
+            completed_at,
+        )
+
+    def test_planned_trip_rejects_completed_at(self):
+        with self.assertRaises(TripIdentityValidationError):
+            validate_trip_identity(
+                gardasil_trip(
+                    status=TripStatus.PLANNED,
+                    completed_at=START_TIME + timedelta(hours=1),
+                )
+            )
+
+    def test_active_trip_rejects_completed_at(self):
+        with self.assertRaises(TripIdentityValidationError):
+            validate_trip_identity(
+                gardasil_trip(completed_at=START_TIME + timedelta(hours=1))
+            )
+
+    def test_cancelled_trip_rejects_completed_at(self):
+        with self.assertRaises(TripIdentityValidationError):
+            validate_trip_identity(
+                gardasil_trip(
+                    status=TripStatus.CANCELLED,
+                    completed_at=START_TIME + timedelta(hours=1),
+                )
+            )
+
+    def test_completed_trip_rejects_missing_completed_at(self):
+        with self.assertRaises(TripIdentityValidationError):
+            validate_trip_identity(gardasil_trip(status=TripStatus.COMPLETED))
+
+    def test_completed_trip_rejects_naive_completed_at(self):
+        with self.assertRaises(TripIdentityValidationError):
+            validate_trip_identity(
+                gardasil_trip(
+                    status=TripStatus.COMPLETED,
+                    completed_at=datetime(2026, 1, 1, 9, 0),
+                )
+            )
+
+    def test_completed_trip_rejects_completed_at_before_start(self):
+        with self.assertRaises(TripIdentityValidationError):
+            validate_trip_identity(
+                gardasil_trip(
+                    status=TripStatus.COMPLETED,
+                    completed_at=START_TIME - timedelta(seconds=1),
+                )
+            )
+
     def test_missing_presentation_fails_validation(self):
         with self.assertRaises(TripIdentityValidationError):
             resolve_trip_for_device(DEVICE_ID, (gardasil_trip(presentation=""),), (assignment(),))
@@ -218,7 +278,12 @@ class TripIdentityTests(unittest.TestCase):
         with self.assertRaises(TripNotActiveError):
             resolve_trip_for_device(
                 DEVICE_ID,
-                (gardasil_trip(status=TripStatus.COMPLETED),),
+                (
+                    gardasil_trip(
+                        status=TripStatus.COMPLETED,
+                        completed_at=START_TIME + timedelta(hours=1),
+                    ),
+                ),
                 (assignment(),),
             )
 

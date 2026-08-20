@@ -10,6 +10,7 @@ try:
         DeviceAssignment,
         TripIdentity,
         TripStatus,
+        trip_identity_with_status,
         validate_device_assignment,
         validate_trip_identity,
     )
@@ -20,6 +21,7 @@ except ImportError:
         DeviceAssignment,
         TripIdentity,
         TripStatus,
+        trip_identity_with_status,
         validate_device_assignment,
         validate_trip_identity,
     )
@@ -124,6 +126,7 @@ class IdentityRepository(Protocol):
         next_trip_status: TripStatus,
         expected_assignment_active: bool,
         next_assignment_active: bool,
+        completed_at: Optional[datetime] = None,
     ) -> Tuple[TripIdentity, DeviceAssignment]:
         ...
 
@@ -375,6 +378,7 @@ class InMemoryTelemetryStateRepository(IdentityRepository, TelemetryStateReposit
         next_trip_status: TripStatus,
         expected_assignment_active: bool,
         next_assignment_active: bool,
+        completed_at: Optional[datetime] = None,
     ) -> Tuple[TripIdentity, DeviceAssignment]:
         """Atomically replace one trip status and assignment active flag."""
         with self._lock:
@@ -406,7 +410,11 @@ class InMemoryTelemetryStateRepository(IdentityRepository, TelemetryStateReposit
                     "Device already has another active assignment"
                 )
 
-            next_trip = replace(trip, status=next_trip_status)
+            next_trip = trip_identity_with_status(
+                trip,
+                next_trip_status,
+                completed_at=completed_at,
+            )
             next_assignment = replace(
                 assignment,
                 active=next_assignment_active,

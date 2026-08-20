@@ -44,9 +44,12 @@ except ImportError:
 
 class CompletedTripOutcomeTests(unittest.TestCase):
     def setUp(self):
-        self.trip = contract_trip(status=TripStatus.COMPLETED)
-        self.state = contract_state(contract_sample())
         self.completed_at = CONTRACT_TIME + timedelta(minutes=30)
+        self.trip = contract_trip(
+            status=TripStatus.COMPLETED,
+            completed_at=self.completed_at,
+        )
+        self.state = contract_state(contract_sample())
 
     def test_factory_preserves_identity_provenance_and_final_state(self):
         outcome = completed_trip_outcome_from_state(

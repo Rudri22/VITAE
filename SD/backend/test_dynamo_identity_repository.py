@@ -40,6 +40,23 @@ except ImportError:
 LOCAL_ENDPOINT_ENV = "VITAE_DYNAMODB_LOCAL_ENDPOINT"
 
 
+class DynamoIdentitySerializationShapeTests(unittest.TestCase):
+    def test_completed_trip_document_contains_v2_completion_timestamp(self):
+        repository = DynamoIdentityAccessRepository(object(), "identity-table")
+        completed_at = contract_trip().start_time + timedelta(hours=1)
+        trip = replace(
+            contract_trip(),
+            status=TripStatus.COMPLETED,
+            completed_at=completed_at,
+        )
+        item = repository._trip_item(trip)
+        self.assertEqual(item["document"]["schema_version"], 2)
+        self.assertEqual(
+            item["document"]["completed_at"],
+            completed_at.isoformat().replace("+00:00", "Z"),
+        )
+
+
 class DynamoLocalTestMixin:
     @classmethod
     def setUpClass(cls):
@@ -314,9 +331,14 @@ class DynamoIdentityPersistenceTests(DynamoLocalTestMixin, unittest.TestCase):
                 TripStatus.COMPLETED,
                 True,
                 False,
+                trip.start_time + timedelta(hours=1),
             )
         )
         self.assertEqual(completed_trip.status, TripStatus.COMPLETED)
+        self.assertEqual(
+            completed_trip.completed_at,
+            trip.start_time + timedelta(hours=1),
+        )
         self.assertFalse(completed_assignment.active)
 
         next_trip = replace(

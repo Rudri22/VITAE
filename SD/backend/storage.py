@@ -2931,16 +2931,18 @@ def complete_driver_delivery(
     destination_code = str(payload.get("destinationVerificationCode") or "").strip()
     if destination_code != str(shipment.get("destinationVerificationCode") or ""):
         raise ValueError("The destination handoff code is incorrect")
-    transition = None
-    if shipment.get("lotTripId"):
-        if v2_lifecycle_service is None:
-            raise ValueError("V2 shipment lifecycle service is unavailable")
-        transition = v2_lifecycle_service.complete_for_shipment(shipment)
-
     shipment_before = deepcopy(shipment)
     driver_before = deepcopy(DRIVERS.get(driver_id))
     timestamp = now_iso()
+    transition = None
     try:
+        if shipment.get("lotTripId"):
+            if v2_lifecycle_service is None:
+                raise ValueError("V2 shipment lifecycle service is unavailable")
+            transition = v2_lifecycle_service.complete_for_shipment(
+                shipment,
+                _parse_datetime(timestamp, "Completion timestamp"),
+            )
         _commit_driver_delivery_completion(
             shipment,
             driver_id,

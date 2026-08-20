@@ -15,7 +15,13 @@ try:
     from .risk_rules import ApplicationStatus
     from .state_repository import LiveState, TelemetryRecord
     from .shipment_access import ShipmentAccess
-    from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
+    from .trip_identity import (
+        DeviceAssignment,
+        TripIdentity,
+        TripIdentityValidationError,
+        TripStatus,
+        validate_trip_identity,
+    )
 except ImportError:
     from alerting import Alert, AlertAction, AlertSeverity, AlertStatus, AlertType
     from decision_outbox import (
@@ -28,7 +34,13 @@ except ImportError:
     from risk_rules import ApplicationStatus
     from state_repository import LiveState, TelemetryRecord
     from shipment_access import ShipmentAccess
-    from trip_identity import DeviceAssignment, TripIdentity, TripStatus
+    from trip_identity import (
+        DeviceAssignment,
+        TripIdentity,
+        TripIdentityValidationError,
+        TripStatus,
+        validate_trip_identity,
+    )
 
 if TYPE_CHECKING:
     try:
@@ -38,6 +50,7 @@ if TYPE_CHECKING:
 
 
 SCHEMA_VERSION = 1
+TRIP_IDENTITY_SCHEMA_VERSION = 2
 ALERT_OUTBOX_EVENT_SCHEMA_VERSION = 2
 
 
@@ -46,6 +59,10 @@ class RepositorySerializationError(ValueError):
 
 
 def serialize_trip_identity(value: TripIdentity) -> dict[str, Any]:
+    try:
+        validate_trip_identity(value)
+    except TripIdentityValidationError as error:
+        raise RepositorySerializationError(str(error)) from error
     return _document(
         "vitae.trip_identity",
         {
@@ -61,13 +78,23 @@ def serialize_trip_identity(value: TripIdentity) -> dict[str, Any]:
             "destination": value.destination,
             "start_time": _serialize_datetime(value.start_time, "start_time"),
             "status": _enum_value(value.status, TripStatus, "status"),
+            "completed_at": _optional_datetime(
+                value.completed_at, "completed_at"
+            ),
         },
+        schema_version=TRIP_IDENTITY_SCHEMA_VERSION,
     )
 
 
 def deserialize_trip_identity(payload: Mapping[str, Any]) -> TripIdentity:
-    fields = _fields(payload, "vitae.trip_identity", _TRIP_FIELDS)
-    return TripIdentity(
+    version = _schema_version(payload, "vitae.trip_identity", (1, 2))
+    fields = _fields(
+        payload,
+        "vitae.trip_identity",
+        _TRIP_IDENTITY_V1_FIELDS if version == 1 else _TRIP_IDENTITY_V2_FIELDS,
+        supported_versions=(1, 2),
+    )
+    value = TripIdentity(
         trip_id=_text(fields, "trip_id"),
         lot_trip_id=_text(fields, "lot_trip_id"),
         lot_id=_text(fields, "lot_id"),
@@ -80,7 +107,18 @@ def deserialize_trip_identity(payload: Mapping[str, Any]) -> TripIdentity:
         destination=_text(fields, "destination"),
         start_time=_deserialize_datetime(fields["start_time"], "start_time"),
         status=_enum(fields["status"], TripStatus, "status"),
+        completed_at=(
+            None
+            if version == 1
+            else _deserialize_optional_datetime(
+                fields["completed_at"], "completed_at"
+            )
+        ),
     )
+    try:
+        return validate_trip_identity(value)
+    except TripIdentityValidationError as error:
+        raise RepositorySerializationError(str(error)) from error
 
 
 def serialize_device_assignment(value: DeviceAssignment) -> dict[str, Any]:
@@ -659,7 +697,8 @@ def deserialize_completed_trip_outcome(
     return validate_completed_trip_outcome(value)
 
 
-_TRIP_FIELDS = frozenset(("trip_id", "lot_trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "origin", "destination", "start_time", "status"))
+_TRIP_IDENTITY_V1_FIELDS = frozenset(("trip_id", "lot_trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "origin", "destination", "start_time", "status"))
+_TRIP_IDENTITY_V2_FIELDS = _TRIP_IDENTITY_V1_FIELDS | frozenset(("completed_at",))
 _ASSIGNMENT_FIELDS = frozenset(("assignment_id", "device_id", "trip_id", "lot_trip_id", "assigned_at", "active"))
 _SHIPMENT_ACCESS_FIELDS = frozenset(("shipment_id", "lot_trip_id", "organization_id", "driver_id"))
 _TELEMETRY_FIELDS = frozenset(("trip_id", "lot_trip_id", "sample_id", "device_id", "timestamp", "temperature", "battery_level", "latitude", "longitude", "device_health"))

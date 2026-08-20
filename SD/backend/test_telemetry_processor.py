@@ -221,7 +221,12 @@ class TelemetryProcessorTests(unittest.TestCase):
 
     def test_completed_trip_propagates_and_writes_nothing(self):
         repository = InMemoryTelemetryStateRepository()
-        repository.register_trip(gardasil_trip(status=TripStatus.COMPLETED))
+        repository.register_trip(
+            gardasil_trip(
+                status=TripStatus.COMPLETED,
+                completed_at=BASE_TIME,
+            )
+        )
         repository.register_device_assignment(assignment())
 
         with self.assertRaises(TripNotActiveError):

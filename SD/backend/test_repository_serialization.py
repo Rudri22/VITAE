@@ -43,6 +43,7 @@ try:
         serialize_trip_identity,
     )
     from .state_repository import telemetry_record_from_sample
+    from .trip_identity import TripStatus
 except ImportError:
     from alerting import InMemoryAlertRepository
     from decision_outbox import OutboxDeliveryStatus
@@ -82,6 +83,7 @@ except ImportError:
         serialize_trip_identity,
     )
     from state_repository import telemetry_record_from_sample
+    from trip_identity import TripStatus
 
 
 class RepositorySerializationTests(unittest.TestCase):
@@ -101,6 +103,33 @@ class RepositorySerializationTests(unittest.TestCase):
             deserialize_trip_identity(serialize_trip_identity(self.trip)),
             self.trip,
         )
+
+    def test_completed_trip_identity_round_trip(self):
+        completed = replace(
+            self.trip,
+            status=TripStatus.COMPLETED,
+            completed_at=CONTRACT_TIME + timedelta(hours=1),
+        )
+        document = serialize_trip_identity(completed)
+        self.assertEqual(document["schema_version"], 2)
+        self.assertEqual(
+            deserialize_trip_identity(document),
+            completed,
+        )
+
+    def test_trip_identity_v1_non_completed_document_remains_readable(self):
+        document = serialize_trip_identity(self.trip)
+        document["schema_version"] = 1
+        document.pop("completed_at")
+        self.assertEqual(deserialize_trip_identity(document), self.trip)
+
+    def test_trip_identity_v1_completed_document_is_rejected(self):
+        document = serialize_trip_identity(self.trip)
+        document["schema_version"] = 1
+        document.pop("completed_at")
+        document["status"] = TripStatus.COMPLETED.value
+        with self.assertRaises(RepositorySerializationError):
+            deserialize_trip_identity(document)
 
     def test_device_assignment_round_trip(self):
         self.assertEqual(
@@ -234,10 +263,13 @@ class RepositorySerializationTests(unittest.TestCase):
         )
         for document in documents:
             with self.subTest(schema=document["schema"]):
-                self.assertEqual(
-                    document["schema_version"],
-                    2 if document["schema"] == "vitae.alert_outbox_event" else 1,
+                expected_version = (
+                    2
+                    if document["schema"]
+                    in {"vitae.trip_identity", "vitae.alert_outbox_event"}
+                    else 1
                 )
+                self.assertEqual(document["schema_version"], expected_version)
                 self.assertIsInstance(json.dumps(document), str)
 
     def test_timestamps_are_canonical_utc(self):
@@ -251,9 +283,18 @@ class RepositorySerializationTests(unittest.TestCase):
             deserialize_trip_identity(document).start_time,
             self.trip.start_time,
         )
+        completed = replace(
+            self.trip,
+            status=TripStatus.COMPLETED,
+            completed_at=(CONTRACT_TIME + timedelta(hours=1)).astimezone(
+                timezone(timedelta(hours=3))
+            ),
+        )
+        completed_document = serialize_trip_identity(completed)
+        self.assertTrue(completed_document["completed_at"].endswith("Z"))
 
     def test_unknown_schema_version_is_rejected(self):
-        for version in (2, True, "1"):
+        for version in (3, True, "2"):
             document = serialize_trip_identity(self.trip)
             document["schema_version"] = version
             with self.subTest(version=version):

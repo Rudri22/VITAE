@@ -172,10 +172,14 @@ def contract_state(sample, previous=None):
 def contract_completed_trip_outcome(**changes):
     sample = contract_sample()
     state = contract_state(sample)
-    trip = contract_trip(status=TripStatus.COMPLETED)
+    completed_at = CONTRACT_TIME + timedelta(minutes=30)
+    trip = contract_trip(
+        status=TripStatus.COMPLETED,
+        completed_at=completed_at,
+    )
     value = completed_trip_outcome_from_state(
         trip,
-        CONTRACT_TIME + timedelta(minutes=30),
+        completed_at,
         state,
     )
     return replace(value, **changes)
@@ -370,6 +374,37 @@ class IdentityRepositoryContractMixin:
         self.assertEqual(
             self.repository.get_device_assignments(assignment.device_id),
             (assignment,),
+        )
+
+    def test_contract_completion_persists_authoritative_timestamp(self):
+        trip = contract_trip()
+        assignment = contract_assignment()
+        self.repository.register_trip_and_assignment(trip, assignment)
+        self.repository.transition_trip_and_assignment(
+            trip.trip_id,
+            assignment.assignment_id,
+            TripStatus.PLANNED,
+            TripStatus.ACTIVE,
+            False,
+            True,
+        )
+        completed_at = CONTRACT_TIME + timedelta(hours=1)
+        completed_trip, completed_assignment = (
+            self.repository.transition_trip_and_assignment(
+                trip.trip_id,
+                assignment.assignment_id,
+                TripStatus.ACTIVE,
+                TripStatus.COMPLETED,
+                True,
+                False,
+                completed_at,
+            )
+        )
+        self.assertEqual(completed_trip.completed_at, completed_at)
+        self.assertFalse(completed_assignment.active)
+        self.assertEqual(
+            self.repository.get_trip_by_id(trip.trip_id),
+            completed_trip,
         )
 
     def test_contract_stale_lifecycle_transition_changes_nothing(self):
