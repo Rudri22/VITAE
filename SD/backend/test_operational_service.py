@@ -25,9 +25,13 @@ try:
         build_local_environment,
         generate_samples,
     )
-    from .state_repository import DuplicateTelemetrySampleError
+    from .state_repository import (
+        DuplicateTelemetrySampleError,
+        TripNotActiveAtCommitError,
+    )
     from .telemetry import TelemetryValidationError
     from .telemetry_processor import ProcessingResult
+    from .trip_identity import TripStatus
 except ImportError:
     from alerting import (
         AlertType,
@@ -51,9 +55,13 @@ except ImportError:
         build_local_environment,
         generate_samples,
     )
-    from state_repository import DuplicateTelemetrySampleError
+    from state_repository import (
+        DuplicateTelemetrySampleError,
+        TripNotActiveAtCommitError,
+    )
     from telemetry import TelemetryValidationError
     from telemetry_processor import ProcessingResult
+    from trip_identity import TripStatus
 
 
 def raw_sample(environment, *, sample_id, elapsed_minutes, temperature):
@@ -125,6 +133,20 @@ class CapturingTelemetryProcessor:
         return self._delegate.processing_repository
 
 
+class CompletingBeforeCommitProcessor(CapturingTelemetryProcessor):
+    def commit_processing_bundle(self, result, *args):
+        self.processing_repository.transition_trip_and_assignment(
+            result.telemetry_record.trip_id,
+            "sim-vitae-assignment-001",
+            TripStatus.ACTIVE,
+            TripStatus.COMPLETED,
+            True,
+            False,
+            completed_at=result.telemetry_record.timestamp,
+        )
+        return self._delegate.commit_processing_bundle(result, *args)
+
+
 class OperationalTelemetryServiceTests(unittest.TestCase):
     def setUp(self):
         self.environment = build_local_environment()
@@ -169,6 +191,32 @@ class OperationalTelemetryServiceTests(unittest.TestCase):
             )
         )
         self.assertIs(result.processing_result, processor.last_result)
+
+    def test_completion_between_prepare_and_commit_fences_entire_bundle(self):
+        processor = CompletingBeforeCommitProcessor(self.environment.processor)
+        service = OperationalTelemetryService(processor, self.alert_repository)
+        with self.assertRaises(TripNotActiveAtCommitError):
+            service.process(
+                raw_sample(
+                    self.environment,
+                    sample_id="sample-completion-race",
+                    elapsed_minutes=0,
+                    temperature=9.0,
+                )
+            )
+        repository = self.environment.repository
+        self.assertEqual(repository.get_telemetry_history("lot-trip-sim-001"), ())
+        self.assertIsNone(repository.get_live_state("lot-trip-sim-001"))
+        self.assertEqual(
+            repository.get_decision_history("lot-trip-sim-001"), ()
+        )
+        self.assertEqual(
+            repository.list_dispatchable_outbox_events(
+                self.environment.start_time
+            ),
+            (),
+        )
+        self.assertEqual(self.alert_repository.list_alerts(), ())
 
     def test_safe_result_creates_no_alert_and_does_not_write_repository(self):
         result = self.process(

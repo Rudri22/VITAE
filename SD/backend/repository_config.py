@@ -151,6 +151,7 @@ def compose_repositories(
     telemetry = DynamoTelemetryStateRepository(
         client,
         config.telemetry_table,
+        identity_table_name=config.identity_table,
         key_namespace=config.key_namespace,
     )
     alerts = DynamoAlertRepository(

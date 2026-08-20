@@ -212,6 +212,10 @@ class RepositoryConfigTests(unittest.TestCase):
             composition.telemetry_state_repository.table_name,
             "telemetry-dev",
         )
+        self.assertEqual(
+            composition.telemetry_state_repository.identity_table_name,
+            "identity-dev",
+        )
         self.assertIsInstance(
             composition.shipment_access_repository,
             ShipmentAccessRepository,

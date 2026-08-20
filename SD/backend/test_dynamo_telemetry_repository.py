@@ -8,6 +8,7 @@ from threading import Barrier
 from unittest.mock import MagicMock, patch
 
 import boto3
+from botocore.exceptions import ClientError
 
 try:
     from .dynamo_telemetry_repository import (
@@ -16,18 +17,22 @@ try:
         _outbox_work_shard,
         _unmarshal,
     )
+    from .dynamo_identity_repository import DynamoIdentityAccessRepository
     from .repository_contract_suite import (
         ProcessingBundleRepositoryContractMixin,
         TelemetryStateRepositoryContractMixin,
         contract_alert_outbox_event,
+        contract_assignment,
         contract_decision_record,
         contract_sample,
         contract_state,
+        contract_trip,
     )
     from .repository_serialization import (
         serialize_alert_outbox_event,
         serialize_live_state,
         serialize_status_decision_record,
+        serialize_trip_identity,
     )
     from .decision_outbox import DecisionOutboxError
     from .state_repository import (
@@ -35,8 +40,10 @@ try:
         DuplicateTelemetrySampleError,
         OutOfOrderTelemetryError,
         StateIntegrityError,
+        TripNotActiveAtCommitError,
         telemetry_record_from_sample,
     )
+    from .trip_identity import TripStatus
 except ImportError:
     from dynamo_telemetry_repository import (
         DynamoTelemetryStateRepository,
@@ -44,18 +51,22 @@ except ImportError:
         _outbox_work_shard,
         _unmarshal,
     )
+    from dynamo_identity_repository import DynamoIdentityAccessRepository
     from repository_contract_suite import (
         ProcessingBundleRepositoryContractMixin,
         TelemetryStateRepositoryContractMixin,
         contract_alert_outbox_event,
+        contract_assignment,
         contract_decision_record,
         contract_sample,
         contract_state,
+        contract_trip,
     )
     from repository_serialization import (
         serialize_alert_outbox_event,
         serialize_live_state,
         serialize_status_decision_record,
+        serialize_trip_identity,
     )
     from decision_outbox import DecisionOutboxError
     from state_repository import (
@@ -63,8 +74,10 @@ except ImportError:
         DuplicateTelemetrySampleError,
         OutOfOrderTelemetryError,
         StateIntegrityError,
+        TripNotActiveAtCommitError,
         telemetry_record_from_sample,
     )
+    from trip_identity import TripStatus
 
 
 LOCAL_ENDPOINT_ENV = "VITAE_DYNAMODB_LOCAL_ENDPOINT"
@@ -87,6 +100,7 @@ class DynamoTelemetryLocalMixin:
             aws_secret_access_key="local",
         )
         cls.table_name = f"vitae-telemetry-test-{uuid.uuid4().hex}"
+        cls.identity_table_name = f"vitae-identity-test-{uuid.uuid4().hex}"
         cls.client.create_table(
             TableName=cls.table_name,
             KeySchema=[
@@ -112,19 +126,63 @@ class DynamoTelemetryLocalMixin:
             BillingMode="PAY_PER_REQUEST",
         )
         cls.client.get_waiter("table_exists").wait(TableName=cls.table_name)
+        cls.client.create_table(
+            TableName=cls.identity_table_name,
+            KeySchema=[
+                {"AttributeName": "PK", "KeyType": "HASH"},
+                {"AttributeName": "SK", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "PK", "AttributeType": "S"},
+                {"AttributeName": "SK", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        cls.client.get_waiter("table_exists").wait(
+            TableName=cls.identity_table_name
+        )
 
     @classmethod
     def tearDownClass(cls):
         try:
             cls.client.delete_table(TableName=cls.table_name)
+            cls.client.delete_table(TableName=cls.identity_table_name)
         finally:
             super().tearDownClass()
 
     def new_repository(self, namespace=None):
-        return DynamoTelemetryStateRepository(
+        key_namespace = namespace or uuid.uuid4().hex
+        identity = DynamoIdentityAccessRepository(
+            self.client,
+            self.identity_table_name,
+            key_namespace=key_namespace,
+        )
+        if identity.get_trip_by_id("contract-trip") is None:
+            identity.register_trip_and_assignment(
+                contract_trip(status=TripStatus.ACTIVE),
+                contract_assignment(active=True),
+            )
+        repository = DynamoTelemetryStateRepository(
             self.client,
             self.table_name,
-            key_namespace=namespace or uuid.uuid4().hex,
+            identity_table_name=self.identity_table_name,
+            key_namespace=key_namespace,
+        )
+        repository._test_identity_repository = identity
+        return repository
+
+    def prepare_active_contract_trip(self, repository):
+        pass
+
+    def complete_contract_trip(self, repository):
+        repository._test_identity_repository.transition_trip_and_assignment(
+            "contract-trip",
+            "contract-assignment",
+            TripStatus.ACTIVE,
+            TripStatus.COMPLETED,
+            True,
+            False,
+            completed_at=contract_sample(minutes=30).timestamp,
         )
 
 
@@ -227,6 +285,55 @@ class DynamoTelemetryPersistenceTests(DynamoTelemetryLocalMixin, unittest.TestCa
             self.repository.get_telemetry_history("contract-lot-trip"),
             (self.record,),
         )
+
+    def test_completion_race_fences_bundle_in_the_same_dynamo_transaction(self):
+        barrier = Barrier(2)
+
+        def commit_bundle():
+            decision = contract_decision_record(self.sample, self.state)
+            barrier.wait()
+            try:
+                self.repository.commit_processing_bundle(
+                    self.record,
+                    self.state,
+                    decision,
+                    contract_alert_outbox_event(decision),
+                    expected_revision=None,
+                )
+                return "telemetry"
+            except TripNotActiveAtCommitError:
+                return "fenced"
+
+        def complete_trip():
+            barrier.wait()
+            self.repository._test_identity_repository.transition_trip_and_assignment(
+                "contract-trip",
+                "contract-assignment",
+                TripStatus.ACTIVE,
+                TripStatus.COMPLETED,
+                True,
+                False,
+                completed_at=contract_sample(minutes=30).timestamp,
+            )
+            return "completed"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            telemetry_future = executor.submit(commit_bundle)
+            completion_future = executor.submit(complete_trip)
+            telemetry_result = telemetry_future.result()
+            self.assertEqual(completion_future.result(), "completed")
+
+        self.assertIn(telemetry_result, ("telemetry", "fenced"))
+        history = self.repository.get_telemetry_history("contract-lot-trip")
+        self.assertEqual(len(history), 1 if telemetry_result == "telemetry" else 0)
+        if telemetry_result == "fenced":
+            decision = contract_decision_record(self.sample, self.state)
+            self.assertIsNone(self.repository.get_decision(decision.decision_id))
+            self.assertIsNone(
+                self.repository.get_outbox_event(
+                    contract_alert_outbox_event(decision).event_id
+                )
+            )
 
     def test_corrupt_live_state_document_fails_closed(self):
         document = serialize_live_state(self.state)
@@ -749,6 +856,100 @@ class DynamoTelemetryPersistenceTests(DynamoTelemetryLocalMixin, unittest.TestCa
 
 
 class DynamoDecisionQueryPaginationTests(unittest.TestCase):
+    def test_commit_requires_an_explicit_identity_table(self):
+        client = MagicMock()
+        repository = DynamoTelemetryStateRepository(client, "telemetry-table")
+        sample = contract_sample()
+        with self.assertRaisesRegex(StateIntegrityError, "identity table"):
+            repository.commit_sample_and_state(
+                telemetry_record_from_sample(
+                    "contract-trip", "contract-lot-trip", sample
+                ),
+                contract_state(sample),
+                None,
+            )
+        client.transact_write_items.assert_not_called()
+
+    def test_commit_transaction_conditions_on_exact_active_trip(self):
+        client = MagicMock()
+        client.get_item.return_value = {}
+        repository = DynamoTelemetryStateRepository(
+            client,
+            "telemetry-table",
+            identity_table_name="identity-table",
+            key_namespace="scope",
+        )
+        sample = contract_sample()
+        repository.commit_sample_and_state(
+            telemetry_record_from_sample(
+                "contract-trip", "contract-lot-trip", sample
+            ),
+            contract_state(sample),
+            None,
+        )
+        condition = client.transact_write_items.call_args.kwargs[
+            "TransactItems"
+        ][0]["ConditionCheck"]
+        self.assertEqual(condition["TableName"], "identity-table")
+        self.assertEqual(
+            _unmarshal(condition["Key"]),
+            {"PK": "scope#TRIP#contract-trip", "SK": "META"},
+        )
+        self.assertIn("#status = :active", condition["ConditionExpression"])
+        self.assertEqual(
+            _unmarshal(condition["ExpressionAttributeValues"])[":active"],
+            "ACTIVE",
+        )
+
+    def test_transaction_rejection_maps_completed_trip_to_fence_error(self):
+        client = MagicMock()
+        client.get_item.side_effect = (
+            {},
+            {},
+            {
+                "Item": _marshal(
+                    {
+                        "PK": "scope#TRIP#contract-trip",
+                        "SK": "META",
+                        "entityType": "TRIP",
+                        "status": "COMPLETED",
+                        "tripId": "contract-trip",
+                        "lotTripId": "contract-lot-trip",
+                        "deviceId": "contract-device",
+                        "document": serialize_trip_identity(
+                            contract_trip(
+                                status=TripStatus.COMPLETED,
+                                completed_at=contract_sample(minutes=30).timestamp,
+                            )
+                        ),
+                    }
+                )
+            },
+        )
+        client.transact_write_items.side_effect = ClientError(
+            {"Error": {"Code": "TransactionCanceledException"}},
+            "TransactWriteItems",
+        )
+        repository = DynamoTelemetryStateRepository(
+            client,
+            "telemetry-table",
+            identity_table_name="identity-table",
+            key_namespace="scope",
+        )
+        sample = contract_sample()
+        with self.assertRaises(TripNotActiveAtCommitError):
+            repository.commit_sample_and_state(
+                telemetry_record_from_sample(
+                    "contract-trip", "contract-lot-trip", sample
+                ),
+                contract_state(sample),
+                None,
+            )
+        self.assertEqual(
+            client.get_item.call_args_list[-1].kwargs["TableName"],
+            "identity-table",
+        )
+
     def test_partition_query_follows_last_evaluated_key(self):
         client = MagicMock()
         first_key = _marshal({"PK": "lot", "SK": "DECISION#one"})

@@ -13,6 +13,7 @@ try:
     from .alerting import InMemoryAlertRepository
     from .decision_outbox import InMemoryProcessingBundleRepository, OutboxDeliveryStatus
     from .dynamo_alert_repository import DynamoAlertRepository
+    from .dynamo_identity_repository import DynamoIdentityAccessRepository
     from .dynamo_telemetry_repository import DynamoTelemetryStateRepository
     from .outbox_dispatcher import (
         DispatchEventOutcome,
@@ -22,25 +23,32 @@ try:
     from .repository_contract_suite import (
         CONTRACT_TIME,
         contract_alert_outbox_event,
+        contract_assignment,
         contract_decision_record,
         contract_sample,
         contract_state,
+        contract_trip,
     )
     from .state_repository import telemetry_record_from_sample
+    from .trip_identity import TripStatus
 except ImportError:
     from alerting import InMemoryAlertRepository
     from decision_outbox import InMemoryProcessingBundleRepository, OutboxDeliveryStatus
     from dynamo_alert_repository import DynamoAlertRepository
+    from dynamo_identity_repository import DynamoIdentityAccessRepository
     from dynamo_telemetry_repository import DynamoTelemetryStateRepository
     from outbox_dispatcher import DispatchEventOutcome, OutboxDispatcher, OutboxRetryPolicy
     from repository_contract_suite import (
         CONTRACT_TIME,
         contract_alert_outbox_event,
+        contract_assignment,
         contract_decision_record,
         contract_sample,
         contract_state,
+        contract_trip,
     )
     from state_repository import telemetry_record_from_sample
+    from trip_identity import TripStatus
 
 
 class FakeClock:
@@ -99,6 +107,10 @@ class BarrierDiscoveryRepository:
 class OutboxDispatcherTests(unittest.TestCase):
     def setUp(self):
         self.repository = InMemoryProcessingBundleRepository()
+        self.repository.register_trip_and_assignment(
+            contract_trip(status=TripStatus.ACTIVE),
+            contract_assignment(active=True),
+        )
         self.alert_repository = InMemoryAlertRepository()
         self.clock = FakeClock()
         sample = contract_sample()
@@ -336,9 +348,20 @@ class DynamoLocalOutboxDispatcherTests(unittest.TestCase):
         )
 
     def telemetry_repository(self):
+        identity = DynamoIdentityAccessRepository(
+            self.client,
+            self.telemetry_table,
+            key_namespace=self.namespace,
+        )
+        if identity.get_trip_by_id("contract-trip") is None:
+            identity.register_trip_and_assignment(
+                contract_trip(status=TripStatus.ACTIVE),
+                contract_assignment(active=True),
+            )
         return DynamoTelemetryStateRepository(
             self.client,
             self.telemetry_table,
+            identity_table_name=self.telemetry_table,
             key_namespace=self.namespace,
         )
 

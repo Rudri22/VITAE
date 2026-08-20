@@ -36,6 +36,7 @@ try:
         IdentityRepository,
         StateIntegrityError,
         TelemetryStateRepository,
+        TripNotActiveAtCommitError,
         live_state_from_decision,
         telemetry_record_from_sample,
     )
@@ -80,6 +81,7 @@ except ImportError:
         IdentityRepository,
         StateIntegrityError,
         TelemetryStateRepository,
+        TripNotActiveAtCommitError,
         live_state_from_decision,
         telemetry_record_from_sample,
     )
@@ -565,11 +567,29 @@ class TelemetryStateRepositoryContractMixin:
     def setUp(self):
         super().setUp()
         self.repository = self.make_telemetry_state_repository()
+        self.prepare_active_contract_trip(self.repository)
         self.sample = contract_sample()
         self.record = telemetry_record_from_sample(
             "contract-trip", "contract-lot-trip", self.sample
         )
         self.state = contract_state(self.sample)
+
+    def prepare_active_contract_trip(self, repository):
+        repository.register_trip_and_assignment(
+            contract_trip(status=TripStatus.ACTIVE),
+            contract_assignment(active=True),
+        )
+
+    def complete_contract_trip(self, repository):
+        repository.transition_trip_and_assignment(
+            "contract-trip",
+            "contract-assignment",
+            TripStatus.ACTIVE,
+            TripStatus.COMPLETED,
+            True,
+            False,
+            completed_at=CONTRACT_TIME + timedelta(minutes=30),
+        )
 
     def commit_first(self):
         self.repository.commit_sample_and_state(
@@ -665,6 +685,14 @@ class TelemetryStateRepositoryContractMixin:
             (self.record,),
         )
 
+    def test_contract_rejects_commit_after_trip_completion_without_partial_write(self):
+        repository = self.repository
+        self.complete_contract_trip(repository)
+        with self.assertRaises(TripNotActiveAtCommitError):
+            self.commit_first()
+        self.assertFalse(repository.has_sample("contract-device", "contract-sample-1"))
+        self.assertIsNone(repository.get_live_state("contract-lot-trip"))
+
 
 class ProcessingBundleRepositoryContractMixin:
     """Reusable decision/outbox behavior for atomic processing repositories."""
@@ -675,12 +703,30 @@ class ProcessingBundleRepositoryContractMixin:
     def setUp(self):
         super().setUp()
         self.repository = self.make_processing_bundle_repository()
+        self.prepare_active_contract_trip(self.repository)
         self.sample = contract_sample()
         self.record = telemetry_record_from_sample(
             "contract-trip", "contract-lot-trip", self.sample
         )
         self.state = contract_state(self.sample)
         self.decision = contract_decision_record(self.sample, self.state)
+
+    def prepare_active_contract_trip(self, repository):
+        repository.register_trip_and_assignment(
+            contract_trip(status=TripStatus.ACTIVE),
+            contract_assignment(active=True),
+        )
+
+    def complete_contract_trip(self, repository):
+        repository.transition_trip_and_assignment(
+            "contract-trip",
+            "contract-assignment",
+            TripStatus.ACTIVE,
+            TripStatus.COMPLETED,
+            True,
+            False,
+            completed_at=CONTRACT_TIME + timedelta(minutes=30),
+        )
 
     def commit_bundle(self, outbox_event=None):
         self.repository.commit_processing_bundle(
@@ -770,6 +816,18 @@ class ProcessingBundleRepositoryContractMixin:
         self.assertEqual(
             self.repository.get_decision_history("contract-lot-trip"), ()
         )
+
+    def test_contract_completion_fence_rejects_entire_bundle(self):
+        self.complete_contract_trip(self.repository)
+        event = contract_alert_outbox_event(self.decision)
+        with self.assertRaises(TripNotActiveAtCommitError):
+            self.commit_bundle(event)
+        self.assertFalse(
+            self.repository.has_sample("contract-device", "contract-sample-1")
+        )
+        self.assertIsNone(self.repository.get_live_state("contract-lot-trip"))
+        self.assertIsNone(self.repository.get_decision(self.decision.decision_id))
+        self.assertIsNone(self.repository.get_outbox_event(event.event_id))
 
     def test_contract_concurrent_claim_has_one_winner(self):
         event = contract_alert_outbox_event(self.decision)

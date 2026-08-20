@@ -20,9 +20,11 @@ try:
     from .repository_contract_suite import (
         contract_alert,
         contract_alert_outbox_event,
+        contract_assignment,
         contract_decision_record,
         contract_sample,
         contract_state,
+        contract_trip,
     )
     from .risk_rules import ApplicationStatus, StatusDecision
     from .state_repository import telemetry_record_from_sample
@@ -30,6 +32,7 @@ try:
         DuplicateTelemetrySampleError,
         InMemoryTelemetryStateRepository,
     )
+    from .trip_identity import TripStatus
 except ImportError:
     from decision_outbox import (
         DETERMINISTIC_ALERT_POLICY_VERSION,
@@ -45,9 +48,11 @@ except ImportError:
     from repository_contract_suite import (
         contract_alert,
         contract_alert_outbox_event,
+        contract_assignment,
         contract_decision_record,
         contract_sample,
         contract_state,
+        contract_trip,
     )
     from risk_rules import ApplicationStatus, StatusDecision
     from state_repository import telemetry_record_from_sample
@@ -55,6 +60,7 @@ except ImportError:
         DuplicateTelemetrySampleError,
         InMemoryTelemetryStateRepository,
     )
+    from trip_identity import TripStatus
 
 
 class DecisionOutboxModelTests(unittest.TestCase):
@@ -148,6 +154,10 @@ class DecisionOutboxModelTests(unittest.TestCase):
 
     def test_outbox_identity_mismatch_rejects_entire_bundle(self):
         repository = InMemoryProcessingBundleRepository()
+        repository.register_trip_and_assignment(
+            contract_trip(status=TripStatus.ACTIVE),
+            contract_assignment(active=True),
+        )
         sample = contract_sample()
         record = telemetry_record_from_sample(
             "contract-trip", "contract-lot-trip", sample
@@ -178,6 +188,10 @@ class DecisionOutboxModelTests(unittest.TestCase):
 class InMemoryProcessingBundleStorageBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.repository = InMemoryProcessingBundleRepository()
+        self.repository.register_trip_and_assignment(
+            contract_trip(status=TripStatus.ACTIVE),
+            contract_assignment(active=True),
+        )
         self.sample = contract_sample()
         self.record = telemetry_record_from_sample(
             "contract-trip", "contract-lot-trip", self.sample

@@ -356,6 +356,7 @@ class InMemoryProcessingBundleRepository(
                 sample_exists=(record.device_id, record.sample_id)
                 in self._sample_identities,
             )
+            self._require_active_trip_at_commit(record)
             if decision_record.decision_id in self._decisions_by_id:
                 raise DecisionOutboxError("Decision ID is already committed")
             if alert_outbox_event is not None:

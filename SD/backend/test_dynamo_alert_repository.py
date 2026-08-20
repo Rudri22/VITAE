@@ -21,6 +21,7 @@ try:
         DynamoAlertRepository,
         _marshal_item,
     )
+    from .dynamo_identity_repository import DynamoIdentityAccessRepository
     from .dynamo_telemetry_repository import DynamoTelemetryStateRepository
     from .operational_service import OperationalTelemetryService
     from .repository_contract_suite import (
@@ -28,11 +29,14 @@ try:
         CONTRACT_TIME,
         contract_alert,
         contract_alert_outbox_event,
+        contract_assignment,
         contract_decision_record,
         contract_sample,
         contract_state,
+        contract_trip,
     )
     from .state_repository import telemetry_record_from_sample
+    from .trip_identity import TripStatus
 except ImportError:
     from alerting import AlertConflictError, AlertStatus
     from decision_outbox import OutboxDeliveryStatus
@@ -41,6 +45,7 @@ except ImportError:
         DynamoAlertRepository,
         _marshal_item,
     )
+    from dynamo_identity_repository import DynamoIdentityAccessRepository
     from dynamo_telemetry_repository import DynamoTelemetryStateRepository
     from operational_service import OperationalTelemetryService
     from repository_contract_suite import (
@@ -48,11 +53,14 @@ except ImportError:
         CONTRACT_TIME,
         contract_alert,
         contract_alert_outbox_event,
+        contract_assignment,
         contract_decision_record,
         contract_sample,
         contract_state,
+        contract_trip,
     )
     from state_repository import telemetry_record_from_sample
+    from trip_identity import TripStatus
 
 
 LOCAL_ENDPOINT_ENV = "VITAE_DYNAMODB_LOCAL_ENDPOINT"
@@ -276,9 +284,19 @@ class DynamoAlertPersistenceTests(DynamoAlertLocalMixin, unittest.TestCase):
         )
 
     def test_pending_outbox_retry_accepts_acknowledged_durable_alert(self):
+        identity = DynamoIdentityAccessRepository(
+            self.client,
+            self.table_name,
+            key_namespace=self.namespace,
+        )
+        identity.register_trip_and_assignment(
+            contract_trip(status=TripStatus.ACTIVE),
+            contract_assignment(active=True),
+        )
         processing = DynamoTelemetryStateRepository(
             self.client,
             self.table_name,
+            identity_table_name=self.table_name,
             key_namespace=self.namespace,
         )
         sample = contract_sample()

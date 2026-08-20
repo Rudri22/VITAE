@@ -12,6 +12,7 @@ try:
         InMemoryTelemetryStateRepository,
         OutOfOrderTelemetryError,
         StateIntegrityError,
+        TripNotActiveAtCommitError,
         live_state_from_decision,
         live_state_to_previous_state,
         telemetry_record_from_sample,
@@ -26,6 +27,7 @@ except ImportError:
         InMemoryTelemetryStateRepository,
         OutOfOrderTelemetryError,
         StateIntegrityError,
+        TripNotActiveAtCommitError,
         live_state_from_decision,
         live_state_to_previous_state,
         telemetry_record_from_sample,
@@ -113,6 +115,7 @@ def assignment():
 class StateRepositoryTests(unittest.TestCase):
     def setUp(self):
         self.repository = InMemoryTelemetryStateRepository()
+        self.repository.register_trip_and_assignment(trip(), assignment())
         self.first_sample = sample()
         self.first_record = telemetry_record_from_sample(
             "trip-1", "lot-trip-1", self.first_sample
@@ -368,16 +371,18 @@ class StateRepositoryTests(unittest.TestCase):
             self.repository.get_device_assignments("device-1"), (expected,)
         )
 
-    def test_telemetry_commit_does_not_create_trip_identity(self):
+    def test_telemetry_commit_does_not_change_trip_identity(self):
+        expected = self.repository.get_trip_by_id("trip-1")
         self.commit_first()
-        self.assertIsNone(self.repository.get_trip_by_id("trip-1"))
-        self.assertIsNone(
-            self.repository.get_trip_by_lot_trip_id("lot-trip-1")
+        self.assertEqual(self.repository.get_trip_by_id("trip-1"), expected)
+        self.assertEqual(
+            self.repository.get_trip_by_lot_trip_id("lot-trip-1"), expected
         )
 
-    def test_telemetry_commit_does_not_create_device_assignment(self):
+    def test_telemetry_commit_does_not_change_device_assignment(self):
+        expected = self.repository.get_device_assignments("device-1")
         self.commit_first()
-        self.assertEqual(self.repository.get_device_assignments("device-1"), ())
+        self.assertEqual(self.repository.get_device_assignments("device-1"), expected)
 
     def test_registered_trip_identity_cannot_be_silently_changed(self):
         self.repository.register_trip(trip())
@@ -393,8 +398,9 @@ class StateRepositoryTests(unittest.TestCase):
             )
 
     def test_assignment_must_reference_registered_trip(self):
+        repository = InMemoryTelemetryStateRepository()
         with self.assertRaises(StateIntegrityError):
-            self.repository.register_device_assignment(assignment())
+            repository.register_device_assignment(assignment())
 
     def test_same_sample_cannot_be_committed_twice_concurrently(self):
         barrier = Barrier(2)
@@ -414,6 +420,57 @@ class StateRepositoryTests(unittest.TestCase):
 
         self.assertCountEqual(outcomes, ["committed", "duplicate"])
         self.assertEqual(len(self.repository.get_telemetry_history("lot-trip-1")), 1)
+
+    def test_completion_and_telemetry_commit_share_one_atomic_lock(self):
+        barrier = Barrier(2)
+        completed_at = BASE_TIME + timedelta(minutes=30)
+
+        def commit_telemetry():
+            barrier.wait()
+            try:
+                self.commit_first()
+                return "telemetry"
+            except TripNotActiveAtCommitError:
+                return "fenced"
+
+        def complete_trip():
+            barrier.wait()
+            self.repository.transition_trip_and_assignment(
+                "trip-1",
+                "assignment-1",
+                TripStatus.ACTIVE,
+                TripStatus.COMPLETED,
+                True,
+                False,
+                completed_at=completed_at,
+            )
+            return "completed"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            telemetry_future = executor.submit(commit_telemetry)
+            completion_future = executor.submit(complete_trip)
+            telemetry_result = telemetry_future.result()
+            self.assertEqual(completion_future.result(), "completed")
+
+        self.assertIn(telemetry_result, ("telemetry", "fenced"))
+        completed = self.repository.get_trip_by_id("trip-1")
+        self.assertEqual(completed.status, TripStatus.COMPLETED)
+        self.assertEqual(completed.completed_at, completed_at)
+        history = self.repository.get_telemetry_history("lot-trip-1")
+        self.assertEqual(len(history), 1 if telemetry_result == "telemetry" else 0)
+        after_sample = sample(
+            sample_id="after-completion",
+            timestamp=BASE_TIME + timedelta(minutes=31),
+        )
+        with self.assertRaises(TripNotActiveAtCommitError):
+            self.repository.commit_sample_and_state(
+                telemetry_record_from_sample("trip-1", "lot-trip-1", after_sample),
+                state_for(
+                    after_sample,
+                    previous=(self.first_state if history else None),
+                ),
+                expected_revision=(1 if history else None),
+            )
 
     def test_naive_record_timestamp_is_rejected(self):
         naive_record = replace(self.first_record, timestamp=BASE_TIME.replace(tzinfo=None))

@@ -32,6 +32,7 @@ try:
         deserialize_live_state,
         deserialize_status_decision_record,
         deserialize_telemetry_record,
+        deserialize_trip_identity,
         serialize_alert_outbox_event,
         serialize_live_state,
         serialize_status_decision_record,
@@ -44,6 +45,7 @@ try:
         OutOfOrderTelemetryError,
         StateIntegrityError,
         TelemetryRecord,
+        TripNotActiveAtCommitError,
         validate_telemetry_state_commit,
     )
 except ImportError:
@@ -66,6 +68,7 @@ except ImportError:
         deserialize_live_state,
         deserialize_status_decision_record,
         deserialize_telemetry_record,
+        deserialize_trip_identity,
         serialize_alert_outbox_event,
         serialize_live_state,
         serialize_status_decision_record,
@@ -78,6 +81,7 @@ except ImportError:
         OutOfOrderTelemetryError,
         StateIntegrityError,
         TelemetryRecord,
+        TripNotActiveAtCommitError,
         validate_telemetry_state_commit,
     )
 
@@ -101,12 +105,18 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         dynamodb_client,
         table_name: str,
         *,
+        identity_table_name=None,
         key_namespace="",
         outbox_work_index_name=OUTBOX_WORK_INDEX_NAME,
     ):
         if dynamodb_client is None:
             raise ValueError("dynamodb_client is required")
         self.table_name = _required_text(table_name, "table_name")
+        self.identity_table_name = (
+            None
+            if identity_table_name is None
+            else _required_text(identity_table_name, "identity_table_name")
+        )
         namespace = str(key_namespace or "").strip()
         self._key_prefix = f"{namespace}#" if namespace else ""
         self._client = dynamodb_client
@@ -142,6 +152,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         new_state: LiveState,
         expected_revision: Optional[int],
     ) -> None:
+        self._require_identity_table()
         current_state = self.get_live_state(record.lot_trip_id)
         sample_exists = self.has_sample(record.device_id, record.sample_id)
         validate_telemetry_state_commit(
@@ -153,6 +164,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         )
 
         actions = [
+            self._active_trip_condition(record),
             self._put(self._sample_guard_item(record)),
             self._put(self._record_item(record)),
             self._live_state_write(new_state, expected_revision),
@@ -172,6 +184,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         alert_outbox_event: Optional[AlertOutboxEvent],
         expected_revision: Optional[int],
     ) -> None:
+        self._require_identity_table()
         current_state = self.get_live_state(record.lot_trip_id)
         sample_exists = self.has_sample(record.device_id, record.sample_id)
         validate_processing_bundle_commit(
@@ -192,6 +205,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
             raise DecisionOutboxError("Outbox event ID is already committed")
 
         actions = [
+            self._active_trip_condition(record),
             self._put(self._sample_guard_item(record)),
             self._put(self._record_item(record)),
             self._live_state_write(new_state, expected_revision),
@@ -473,6 +487,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         )
 
     def _raise_commit_conflict(self, record, new_state, expected_revision, error):
+        self._require_active_trip_after_rejection(record, error)
         try:
             validate_telemetry_state_commit(
                 record=record,
@@ -499,6 +514,7 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         expected_revision,
         error,
     ):
+        self._require_active_trip_after_rejection(record, error)
         try:
             validate_processing_bundle_commit(
                 record=record,
@@ -524,6 +540,75 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
         ):
             raise DecisionOutboxError("Outbox event ID is already committed") from error
         raise StateIntegrityError("Processing bundle was conditionally rejected") from error
+
+    def _require_identity_table(self):
+        if self.identity_table_name is None:
+            raise StateIntegrityError(
+                "Dynamo telemetry commits require an identity table"
+            )
+
+    def _active_trip_condition(self, record):
+        return {
+            "ConditionCheck": {
+                "TableName": self.identity_table_name,
+                "Key": _marshal(self._trip_key(record.trip_id)),
+                "ConditionExpression": (
+                    "entityType = :tripType AND #status = :active "
+                    "AND tripId = :tripId AND lotTripId = :lotTripId "
+                    "AND deviceId = :deviceId "
+                    "AND document.fields.#status = :active "
+                    "AND (attribute_not_exists(document.fields.#completedAt) "
+                    "OR document.fields.#completedAt = :noCompletion)"
+                ),
+                "ExpressionAttributeNames": {
+                    "#status": "status",
+                    "#completedAt": "completed_at",
+                },
+                "ExpressionAttributeValues": _marshal(
+                    {
+                        ":tripType": "TRIP",
+                        ":active": "ACTIVE",
+                        ":tripId": record.trip_id,
+                        ":lotTripId": record.lot_trip_id,
+                        ":deviceId": record.device_id,
+                        ":noCompletion": None,
+                    }
+                ),
+            }
+        }
+
+    def _require_active_trip_after_rejection(self, record, error):
+        response = self._client.get_item(
+            TableName=self.identity_table_name,
+            Key=_marshal(self._trip_key(record.trip_id)),
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        trip = None if item is None else _unmarshal(item)
+        trip_document = None
+        if trip is not None:
+            try:
+                trip_document = deserialize_trip_identity(trip["document"])
+            except (KeyError, RepositorySerializationError) as corruption:
+                raise StateIntegrityError(
+                    "Persisted TripIdentity is invalid"
+                ) from corruption
+        if (
+            trip is None
+            or trip.get("entityType") != "TRIP"
+            or trip.get("status") != "ACTIVE"
+            or trip.get("tripId") != record.trip_id
+            or trip.get("lotTripId") != record.lot_trip_id
+            or trip.get("deviceId") != record.device_id
+            or trip_document.trip_id != record.trip_id
+            or trip_document.lot_trip_id != record.lot_trip_id
+            or trip_document.device_id != record.device_id
+            or trip_document.status.value != "ACTIVE"
+            or trip_document.completed_at is not None
+        ):
+            raise TripNotActiveAtCommitError(
+                "Trip was not ACTIVE when telemetry was committed"
+            ) from error
 
     def _sample_guard_item(self, record):
         return {
@@ -1044,6 +1129,12 @@ class DynamoTelemetryStateRepository(ProcessingBundleRepository):
 
     def _lot_partition(self, lot_trip_id):
         return self._pk(f"LOTTRIP#{_required_text(lot_trip_id, 'lot_trip_id')}")
+
+    def _trip_key(self, trip_id):
+        return {
+            "PK": self._pk(f"TRIP#{_required_text(trip_id, 'trip_id')}"),
+            "SK": "META",
+        }
 
     def _live_state_key(self, lot_trip_id):
         return {"PK": self._lot_partition(lot_trip_id), "SK": "LIVE_STATE"}

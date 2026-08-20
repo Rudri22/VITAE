@@ -78,6 +78,10 @@ class ConcurrentStateUpdateError(StateRepositoryError):
     pass
 
 
+class TripNotActiveAtCommitError(ConcurrentStateUpdateError):
+    """The trip stopped accepting telemetry before the atomic commit."""
+
+
 class StateIntegrityError(StateRepositoryError):
     pass
 
@@ -501,11 +505,25 @@ class InMemoryTelemetryStateRepository(IdentityRepository, TelemetryStateReposit
                 expected_revision=expected_revision,
                 sample_identities=self._sample_identities,
             )
+            self._require_active_trip_at_commit(record)
 
             identity = (record.device_id, record.sample_id)
             self._history.setdefault(record.lot_trip_id, []).append(record)
             self._live_states[record.lot_trip_id] = new_state
             self._sample_identities.add(identity)
+
+    def _require_active_trip_at_commit(self, record: TelemetryRecord) -> None:
+        trip = self._trips_by_id.get(record.trip_id)
+        if (
+            trip is None
+            or trip.lot_trip_id != record.lot_trip_id
+            or trip.device_id != record.device_id
+            or trip.status != TripStatus.ACTIVE
+            or trip.completed_at is not None
+        ):
+            raise TripNotActiveAtCommitError(
+                "Trip must still be ACTIVE when telemetry is committed"
+            )
 
 
 def _validate_commit(
