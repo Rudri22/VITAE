@@ -2,9 +2,11 @@ import unittest
 
 try:
     from .alerting import InMemoryAlertRepository
+    from .completed_trip_outcome import InMemoryCompletedTripOutcomeRepository
     from .decision_outbox import InMemoryProcessingBundleRepository
     from .repository_contract_suite import (
         AlertRepositoryContractMixin,
+        CompletedTripOutcomeRepositoryContractMixin,
         IdentityRepositoryContractMixin,
         ProcessingBundleRepositoryContractMixin,
         ShipmentAccessRepositoryContractMixin,
@@ -14,9 +16,11 @@ try:
     from .state_repository import InMemoryTelemetryStateRepository
 except ImportError:
     from alerting import InMemoryAlertRepository
+    from completed_trip_outcome import InMemoryCompletedTripOutcomeRepository
     from decision_outbox import InMemoryProcessingBundleRepository
     from repository_contract_suite import (
         AlertRepositoryContractMixin,
+        CompletedTripOutcomeRepositoryContractMixin,
         IdentityRepositoryContractMixin,
         ProcessingBundleRepositoryContractMixin,
         ShipmentAccessRepositoryContractMixin,
@@ -32,6 +36,14 @@ class InMemoryIdentityRepositoryContractTests(
 ):
     def make_identity_repository(self):
         return InMemoryTelemetryStateRepository()
+
+
+class InMemoryCompletedTripOutcomeRepositoryContractTests(
+    CompletedTripOutcomeRepositoryContractMixin,
+    unittest.TestCase,
+):
+    def make_completed_trip_outcome_repository(self):
+        return InMemoryCompletedTripOutcomeRepository()
 
 
 class InMemoryTelemetryStateRepositoryContractTests(

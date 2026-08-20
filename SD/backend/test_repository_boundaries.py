@@ -4,6 +4,7 @@ import unittest
 try:
     from . import (
         alert_lifecycle_service,
+        completed_trip_outcome,
         decision_outbox,
         monitoring_service,
         operational_service,
@@ -16,6 +17,10 @@ try:
         telemetry_processor,
     )
     from .alerting import AlertRepository, InMemoryAlertRepository
+    from .completed_trip_outcome import (
+        CompletedTripOutcomeRepository,
+        InMemoryCompletedTripOutcomeRepository,
+    )
     from .decision_outbox import (
         InMemoryProcessingBundleRepository,
         ProcessingBundleRepository,
@@ -27,6 +32,7 @@ try:
     )
 except ImportError:
     import alert_lifecycle_service
+    import completed_trip_outcome
     import decision_outbox
     import monitoring_service
     import operational_service
@@ -38,6 +44,10 @@ except ImportError:
     import shipment_registration
     import telemetry_processor
     from alerting import AlertRepository, InMemoryAlertRepository
+    from completed_trip_outcome import (
+        CompletedTripOutcomeRepository,
+        InMemoryCompletedTripOutcomeRepository,
+    )
     from decision_outbox import (
         InMemoryProcessingBundleRepository,
         ProcessingBundleRepository,
@@ -56,6 +66,10 @@ class RepositoryBoundaryTests(unittest.TestCase):
         self.assertIsInstance(state_repository, IdentityRepository)
         self.assertIsInstance(state_repository, TelemetryStateRepository)
         self.assertIsInstance(InMemoryAlertRepository(), AlertRepository)
+        self.assertIsInstance(
+            InMemoryCompletedTripOutcomeRepository(),
+            CompletedTripOutcomeRepository,
+        )
         self.assertIsInstance(
             InMemoryProcessingBundleRepository(), ProcessingBundleRepository
         )
@@ -106,6 +120,7 @@ class RepositoryBoundaryTests(unittest.TestCase):
             repository_contract_suite,
             repository_serialization,
             decision_outbox,
+            completed_trip_outcome,
             shipment_access,
             sqlite_identity_repository,
         ):

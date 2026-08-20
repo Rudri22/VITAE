@@ -12,6 +12,7 @@ try:
         contract_alert,
         contract_alert_outbox_event,
         contract_assignment,
+        contract_completed_trip_outcome,
         contract_decision_record,
         contract_sample,
         contract_shipment_access,
@@ -20,6 +21,7 @@ try:
     )
     from .repository_serialization import (
         RepositorySerializationError,
+        deserialize_completed_trip_outcome,
         deserialize_alert_outbox_event,
         deserialize_alert,
         deserialize_alert_action,
@@ -32,6 +34,7 @@ try:
         serialize_alert,
         serialize_alert_outbox_event,
         serialize_alert_action,
+        serialize_completed_trip_outcome,
         serialize_device_assignment,
         serialize_live_state,
         serialize_shipment_access,
@@ -48,6 +51,7 @@ except ImportError:
         contract_alert,
         contract_alert_outbox_event,
         contract_assignment,
+        contract_completed_trip_outcome,
         contract_decision_record,
         contract_sample,
         contract_shipment_access,
@@ -56,6 +60,7 @@ except ImportError:
     )
     from repository_serialization import (
         RepositorySerializationError,
+        deserialize_completed_trip_outcome,
         deserialize_alert_outbox_event,
         deserialize_alert,
         deserialize_alert_action,
@@ -68,6 +73,7 @@ except ImportError:
         serialize_alert,
         serialize_alert_outbox_event,
         serialize_alert_action,
+        serialize_completed_trip_outcome,
         serialize_device_assignment,
         serialize_live_state,
         serialize_shipment_access,
@@ -129,6 +135,15 @@ class RepositorySerializationTests(unittest.TestCase):
         self.assertEqual(
             deserialize_live_state(serialize_live_state(excursion_state)),
             excursion_state,
+        )
+
+    def test_completed_trip_outcome_round_trip(self):
+        outcome = contract_completed_trip_outcome()
+        self.assertEqual(
+            deserialize_completed_trip_outcome(
+                serialize_completed_trip_outcome(outcome)
+            ),
+            outcome,
         )
 
     def test_status_decision_record_round_trip(self):
@@ -215,6 +230,7 @@ class RepositorySerializationTests(unittest.TestCase):
             serialize_status_decision_record(contract_decision_record()),
             serialize_alert_outbox_event(contract_alert_outbox_event()),
             serialize_alert(contract_alert()),
+            serialize_completed_trip_outcome(contract_completed_trip_outcome()),
         )
         for document in documents:
             with self.subTest(schema=document["schema"]):

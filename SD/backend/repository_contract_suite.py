@@ -4,6 +4,11 @@ from datetime import datetime, timedelta, timezone
 from threading import Barrier
 
 try:
+    from .completed_trip_outcome import (
+        CompletedTripOutcomeConflictError,
+        CompletedTripOutcomeRepository,
+        completed_trip_outcome_from_state,
+    )
     from .alerting import (
         Alert,
         AlertConflictError,
@@ -43,6 +48,11 @@ try:
     )
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
+    from completed_trip_outcome import (
+        CompletedTripOutcomeConflictError,
+        CompletedTripOutcomeRepository,
+        completed_trip_outcome_from_state,
+    )
     from alerting import (
         Alert,
         AlertConflictError,
@@ -159,6 +169,18 @@ def contract_state(sample, previous=None):
     )
 
 
+def contract_completed_trip_outcome(**changes):
+    sample = contract_sample()
+    state = contract_state(sample)
+    trip = contract_trip(status=TripStatus.COMPLETED)
+    value = completed_trip_outcome_from_state(
+        trip,
+        CONTRACT_TIME + timedelta(minutes=30),
+        state,
+    )
+    return replace(value, **changes)
+
+
 def contract_alert(**changes):
     value = Alert(
         alert_id="contract-alert",
@@ -231,6 +253,45 @@ def contract_alert_outbox_event(decision=None, **changes):
     )
     value = alert_outbox_event_from_candidate(decision, alert)
     return replace(value, **changes)
+
+
+class CompletedTripOutcomeRepositoryContractMixin:
+    """Reusable behavior suite for every completed-outcome repository adapter."""
+
+    def make_completed_trip_outcome_repository(self):
+        raise NotImplementedError
+
+    def setUp(self):
+        super().setUp()
+        self.repository = self.make_completed_trip_outcome_repository()
+        self.outcome = contract_completed_trip_outcome()
+
+    def test_contract_runtime_protocol(self):
+        self.assertIsInstance(self.repository, CompletedTripOutcomeRepository)
+
+    def test_contract_save_and_read_by_lot_trip_id(self):
+        self.assertEqual(self.repository.save_outcome(self.outcome), self.outcome)
+        self.assertEqual(
+            self.repository.get_outcome(self.outcome.lot_trip_id),
+            self.outcome,
+        )
+        self.assertIsNone(self.repository.get_outcome("unknown-lot-trip"))
+
+    def test_contract_identical_save_is_idempotent(self):
+        first = self.repository.save_outcome(self.outcome)
+        second = self.repository.save_outcome(self.outcome)
+        self.assertIs(first, second)
+
+    def test_contract_conflicting_rewrite_is_rejected(self):
+        self.repository.save_outcome(self.outcome)
+        with self.assertRaises(CompletedTripOutcomeConflictError):
+            self.repository.save_outcome(
+                replace(self.outcome, completed_at=self.outcome.completed_at + timedelta(seconds=1))
+            )
+        self.assertEqual(
+            self.repository.get_outcome(self.outcome.lot_trip_id),
+            self.outcome,
+        )
 
 
 class IdentityRepositoryContractMixin:

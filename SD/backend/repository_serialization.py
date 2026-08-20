@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from math import isfinite
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 try:
     from .alerting import Alert, AlertAction, AlertSeverity, AlertStatus, AlertType
@@ -29,6 +29,12 @@ except ImportError:
     from state_repository import LiveState, TelemetryRecord
     from shipment_access import ShipmentAccess
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
+
+if TYPE_CHECKING:
+    try:
+        from .completed_trip_outcome import CompletedTripOutcome
+    except ImportError:
+        from completed_trip_outcome import CompletedTripOutcome
 
 
 SCHEMA_VERSION = 1
@@ -509,6 +515,150 @@ def deserialize_alert(payload: Mapping[str, Any]) -> Alert:
     )
 
 
+def serialize_completed_trip_outcome(
+    value: "CompletedTripOutcome",
+) -> dict[str, Any]:
+    try:
+        from .completed_trip_outcome import validate_completed_trip_outcome
+    except ImportError:
+        from completed_trip_outcome import validate_completed_trip_outcome
+
+    validate_completed_trip_outcome(value)
+    return _document(
+        "vitae.completed_trip_outcome",
+        {
+            "lot_trip_id": value.lot_trip_id,
+            "trip_id": value.trip_id,
+            "lot_id": value.lot_id,
+            "device_id": value.device_id,
+            "product_id": value.product_id,
+            "presentation": value.presentation,
+            "state": value.state,
+            "product_rule_version": value.product_rule_version,
+            "trip_started_at": _serialize_datetime(
+                value.trip_started_at, "trip_started_at"
+            ),
+            "completed_at": _serialize_datetime(value.completed_at, "completed_at"),
+            "final_status": (
+                None
+                if value.final_status is None
+                else _enum_value(value.final_status, ApplicationStatus, "final_status")
+            ),
+            "final_reason_code": _optional_text_value(
+                value.final_reason_code, "final_reason_code"
+            ),
+            "final_active_rule_id": _optional_text_value(
+                value.final_active_rule_id, "final_active_rule_id"
+            ),
+            "final_sample_id": _optional_text_value(
+                value.final_sample_id, "final_sample_id"
+            ),
+            "final_sample_timestamp": _optional_datetime(
+                value.final_sample_timestamp, "final_sample_timestamp"
+            ),
+            "final_temperature": _optional_number(
+                value.final_temperature, "final_temperature"
+            ),
+            "final_live_state_revision": (
+                None
+                if value.final_live_state_revision is None
+                else _positive_integer(
+                    value.final_live_state_revision, "final_live_state_revision"
+                )
+            ),
+            "final_excursion_episode_duration_minutes": _optional_number(
+                value.final_excursion_episode_duration_minutes,
+                "final_excursion_episode_duration_minutes",
+            ),
+            "final_cumulative_excursion_duration_minutes": _optional_number(
+                value.final_cumulative_excursion_duration_minutes,
+                "final_cumulative_excursion_duration_minutes",
+            ),
+            "final_excursion_utilization": _optional_number(
+                value.final_excursion_utilization,
+                "final_excursion_utilization",
+            ),
+        },
+    )
+
+
+def deserialize_completed_trip_outcome(
+    payload: Mapping[str, Any],
+) -> "CompletedTripOutcome":
+    try:
+        from .completed_trip_outcome import (
+            CompletedTripOutcome,
+            validate_completed_trip_outcome,
+        )
+    except ImportError:
+        from completed_trip_outcome import (
+            CompletedTripOutcome,
+            validate_completed_trip_outcome,
+        )
+
+    fields = _fields(
+        payload,
+        "vitae.completed_trip_outcome",
+        _COMPLETED_TRIP_OUTCOME_FIELDS,
+    )
+    final_status = fields["final_status"]
+    value = CompletedTripOutcome(
+        lot_trip_id=_text(fields, "lot_trip_id"),
+        trip_id=_text(fields, "trip_id"),
+        lot_id=_text(fields, "lot_id"),
+        device_id=_text(fields, "device_id"),
+        product_id=_text(fields, "product_id"),
+        presentation=_text(fields, "presentation"),
+        state=_text(fields, "state"),
+        product_rule_version=_text(fields, "product_rule_version"),
+        trip_started_at=_deserialize_datetime(
+            fields["trip_started_at"], "trip_started_at"
+        ),
+        completed_at=_deserialize_datetime(fields["completed_at"], "completed_at"),
+        final_status=(
+            None
+            if final_status is None
+            else _enum(final_status, ApplicationStatus, "final_status")
+        ),
+        final_reason_code=_optional_text_value(
+            fields["final_reason_code"], "final_reason_code"
+        ),
+        final_active_rule_id=_optional_text_value(
+            fields["final_active_rule_id"], "final_active_rule_id"
+        ),
+        final_sample_id=_optional_text_value(
+            fields["final_sample_id"], "final_sample_id"
+        ),
+        final_sample_timestamp=_deserialize_optional_datetime(
+            fields["final_sample_timestamp"], "final_sample_timestamp"
+        ),
+        final_temperature=_optional_number(
+            fields["final_temperature"], "final_temperature"
+        ),
+        final_live_state_revision=(
+            None
+            if fields["final_live_state_revision"] is None
+            else _positive_integer(
+                fields["final_live_state_revision"],
+                "final_live_state_revision",
+            )
+        ),
+        final_excursion_episode_duration_minutes=_optional_number(
+            fields["final_excursion_episode_duration_minutes"],
+            "final_excursion_episode_duration_minutes",
+        ),
+        final_cumulative_excursion_duration_minutes=_optional_number(
+            fields["final_cumulative_excursion_duration_minutes"],
+            "final_cumulative_excursion_duration_minutes",
+        ),
+        final_excursion_utilization=_optional_number(
+            fields["final_excursion_utilization"],
+            "final_excursion_utilization",
+        ),
+    )
+    return validate_completed_trip_outcome(value)
+
+
 _TRIP_FIELDS = frozenset(("trip_id", "lot_trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "origin", "destination", "start_time", "status"))
 _ASSIGNMENT_FIELDS = frozenset(("assignment_id", "device_id", "trip_id", "lot_trip_id", "assigned_at", "active"))
 _SHIPMENT_ACCESS_FIELDS = frozenset(("shipment_id", "lot_trip_id", "organization_id", "driver_id"))
@@ -519,6 +669,7 @@ _ALERT_OUTBOX_EVENT_V1_FIELDS = frozenset(("event_id", "decision_id", "trip_id",
 _ALERT_OUTBOX_EVENT_V2_FIELDS = _ALERT_OUTBOX_EVENT_V1_FIELDS | frozenset(("dead_lettered_at", "dead_lettered_by"))
 _ALERT_ACTION_FIELDS = frozenset(("action_id", "description", "actor_id", "recorded_at"))
 _ALERT_FIELDS = frozenset(("alert_id", "alert_type", "severity", "status", "trip_id", "lot_trip_id", "device_id", "sample_id", "source_status", "reason_code", "active_rule_id", "message", "recommended_action", "detected_at", "updated_at", "acknowledged_by", "acknowledged_at", "actions", "resolved_by", "resolved_at", "resolution_note"))
+_COMPLETED_TRIP_OUTCOME_FIELDS = frozenset(("lot_trip_id", "trip_id", "lot_id", "device_id", "product_id", "presentation", "state", "product_rule_version", "trip_started_at", "completed_at", "final_status", "final_reason_code", "final_active_rule_id", "final_sample_id", "final_sample_timestamp", "final_temperature", "final_live_state_revision", "final_excursion_episode_duration_minutes", "final_cumulative_excursion_duration_minutes", "final_excursion_utilization"))
 
 
 def _document(
