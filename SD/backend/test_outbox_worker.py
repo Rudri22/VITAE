@@ -402,8 +402,11 @@ class OutboxWorkerInfrastructureTests(unittest.TestCase):
             {
                 "dynamodb:DescribeTable",
                 "dynamodb:GetItem",
-                "dynamodb:TransactWriteItems",
+                "dynamodb:PutItem",
             },
+        )
+        self.assertNotIn(
+            "dynamodb:TransactWriteItems", alert_statement["Action"]
         )
         resources = json.dumps(alert_statement["Resource"])
         self.assertNotIn("index/*", resources)
