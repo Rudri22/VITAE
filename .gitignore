@@ -61,6 +61,11 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Generated VITAE ML data and model artifacts
+SD/backend/generated_datasets/
+SD/backend/ml_artifacts/
+SD/backend/ml_runs/
+
 # Flask stuff:
 instance/
 .webassets-cache
