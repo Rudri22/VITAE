@@ -1,7 +1,8 @@
 import os
 import unittest
 import uuid
-from unittest.mock import Mock, patch
+from datetime import timedelta
+from unittest.mock import Mock, call, patch
 
 import boto3
 
@@ -13,6 +14,7 @@ try:
         AlertLifecycleService,
     )
     from .dynamo_identity_repository import DynamoIdentityAccessRepository
+    from .dynamo_alert_repository import DynamoAlertRepository
     from .dynamo_telemetry_repository import DynamoTelemetryStateRepository
     from .monitoring_service import MonitoringService
     from .repository_config import (
@@ -23,10 +25,8 @@ try:
         shipment_access_resolver,
     )
     from .repository_contract_suite import (
-        contract_alert_outbox_event,
-        contract_decision_record,
-        contract_sample,
-        contract_state,
+        contract_assignment,
+        contract_trip,
         contract_alert,
         contract_shipment_access,
     )
@@ -42,10 +42,13 @@ try:
     )
     from .shipment_lifecycle import V2ShipmentLifecycleService
     from .shipment_registration import V2ShipmentRegistrationService
-    from .state_repository import (
-        TelemetryStateRepository,
-        telemetry_record_from_sample,
+    from .operational_service import OperationalTelemetryService
+    from .decision_outbox import (
+        OutboxDeliveryStatus,
+        alert_outbox_event_from_candidate,
+        decision_record_from_processing_result,
     )
+    from .state_repository import TelemetryStateRepository
     from .telemetry_processor import TelemetryProcessor
 except ImportError:
     from alert_lifecycle_service import (
@@ -55,6 +58,7 @@ except ImportError:
         AlertLifecycleService,
     )
     from dynamo_identity_repository import DynamoIdentityAccessRepository
+    from dynamo_alert_repository import DynamoAlertRepository
     from dynamo_telemetry_repository import DynamoTelemetryStateRepository
     from monitoring_service import MonitoringService
     from repository_config import (
@@ -65,10 +69,8 @@ except ImportError:
         shipment_access_resolver,
     )
     from repository_contract_suite import (
-        contract_alert_outbox_event,
-        contract_decision_record,
-        contract_sample,
-        contract_state,
+        contract_assignment,
+        contract_trip,
         contract_alert,
         contract_shipment_access,
     )
@@ -84,10 +86,13 @@ except ImportError:
     )
     from shipment_lifecycle import V2ShipmentLifecycleService
     from shipment_registration import V2ShipmentRegistrationService
-    from state_repository import (
-        TelemetryStateRepository,
-        telemetry_record_from_sample,
+    from operational_service import OperationalTelemetryService
+    from decision_outbox import (
+        OutboxDeliveryStatus,
+        alert_outbox_event_from_candidate,
+        decision_record_from_processing_result,
     )
+    from state_repository import TelemetryStateRepository
     from telemetry_processor import TelemetryProcessor
 
 
@@ -125,7 +130,7 @@ class RepositoryConfigTests(unittest.TestCase):
                 {"VITAE_REPOSITORY_MODE": "sqlite-by-mistake"}
             )
 
-    def test_dynamodb_requires_region_and_both_tables(self):
+    def test_dynamodb_requires_region_and_all_tables(self):
         cases = (
             {"VITAE_REPOSITORY_MODE": "dynamodb"},
             {
@@ -136,6 +141,12 @@ class RepositoryConfigTests(unittest.TestCase):
                 "VITAE_REPOSITORY_MODE": "dynamodb",
                 "VITAE_AWS_REGION": "us-east-1",
                 "VITAE_IDENTITY_TABLE": "identity-dev",
+            },
+            {
+                "VITAE_REPOSITORY_MODE": "dynamodb",
+                "VITAE_AWS_REGION": "us-east-1",
+                "VITAE_IDENTITY_TABLE": "identity-dev",
+                "VITAE_TELEMETRY_TABLE": "telemetry-dev",
             },
         )
         for values in cases:
@@ -150,6 +161,7 @@ class RepositoryConfigTests(unittest.TestCase):
                 "VITAE_AWS_REGION": "us-east-1",
                 "VITAE_IDENTITY_TABLE": "identity-dev",
                 "VITAE_TELEMETRY_TABLE": "telemetry-dev",
+                "VITAE_ALERT_TABLE": "alert-dev",
                 "VITAE_AWS_PROFILE": "vitae-dev",
                 "VITAE_DYNAMODB_ENDPOINT_URL": "http://127.0.0.1:8000",
                 "VITAE_DYNAMODB_KEY_NAMESPACE": "test-scope",
@@ -159,6 +171,7 @@ class RepositoryConfigTests(unittest.TestCase):
         self.assertEqual(config.aws_region, "us-east-1")
         self.assertEqual(config.identity_table, "identity-dev")
         self.assertEqual(config.telemetry_table, "telemetry-dev")
+        self.assertEqual(config.alert_table, "alert-dev")
         self.assertEqual(config.aws_profile, "vitae-dev")
         self.assertEqual(config.key_namespace, "test-scope")
 
@@ -169,9 +182,16 @@ class RepositoryConfigTests(unittest.TestCase):
             aws_region="us-east-1",
             identity_table="identity-dev",
             telemetry_table="telemetry-dev",
+            alert_table="alert-dev",
         )
         composition = compose_repositories(config, dynamodb_client=client)
-        client.describe_table.assert_called_once_with(TableName="telemetry-dev")
+        self.assertEqual(
+            client.describe_table.call_args_list,
+            [
+                call(TableName="telemetry-dev"),
+                call(TableName="alert-dev"),
+            ],
+        )
         self.assertIsInstance(
             composition.identity_repository,
             DynamoIdentityAccessRepository,
@@ -196,9 +216,14 @@ class RepositoryConfigTests(unittest.TestCase):
             composition.shipment_access_repository,
             ShipmentAccessRepository,
         )
+        self.assertIsInstance(
+            composition.alert_repository,
+            DynamoAlertRepository,
+        )
+        self.assertEqual(composition.alert_repository.table_name, "alert-dev")
         self.assertTrue(composition.identity_is_persistent)
         self.assertTrue(composition.telemetry_is_persistent)
-        self.assertFalse(composition.alerts_are_persistent)
+        self.assertTrue(composition.alerts_are_persistent)
 
     def test_dynamodb_initialization_failure_does_not_fallback_to_memory(self):
         config = RepositoryConfig(
@@ -206,6 +231,7 @@ class RepositoryConfigTests(unittest.TestCase):
             aws_region="us-east-1",
             identity_table="identity-dev",
             telemetry_table="telemetry-dev",
+            alert_table="alert-dev",
         )
         with patch(
             f"{RepositoryConfig.__module__}._build_dynamodb_client",
@@ -224,11 +250,29 @@ class RepositoryConfigTests(unittest.TestCase):
             aws_region="us-east-1",
             identity_table="identity-dev",
             telemetry_table="missing-telemetry-dev",
+            alert_table="alert-dev",
         )
 
         with self.assertRaisesRegex(
             RepositoryConfigurationError,
             "telemetry table is unavailable",
+        ):
+            compose_repositories(config, dynamodb_client=client)
+
+    def test_unavailable_alert_table_fails_without_memory_fallback(self):
+        client = Mock()
+        client.describe_table.side_effect = ({}, RuntimeError("table not found"))
+        config = RepositoryConfig(
+            mode=RepositoryMode.DYNAMODB,
+            aws_region="us-east-1",
+            identity_table="identity-dev",
+            telemetry_table="telemetry-dev",
+            alert_table="missing-alert-dev",
+        )
+
+        with self.assertRaisesRegex(
+            RepositoryConfigurationError,
+            "alert table is unavailable",
         ):
             compose_repositories(config, dynamodb_client=client)
 
@@ -404,7 +448,12 @@ class DynamoLocalCompositionServiceTests(
         suffix = uuid.uuid4().hex
         cls.identity_table_name = f"vitae-composition-identity-{suffix}"
         cls.telemetry_table_name = f"vitae-composition-telemetry-{suffix}"
-        for table_name in (cls.identity_table_name, cls.telemetry_table_name):
+        cls.alert_table_name = f"vitae-composition-alert-{suffix}"
+        for table_name in (
+            cls.identity_table_name,
+            cls.telemetry_table_name,
+            cls.alert_table_name,
+        ):
             cls.client.create_table(
                 TableName=table_name,
                 KeySchema=[
@@ -422,7 +471,11 @@ class DynamoLocalCompositionServiceTests(
     @classmethod
     def tearDownClass(cls):
         try:
-            for table_name in (cls.identity_table_name, cls.telemetry_table_name):
+            for table_name in (
+                cls.identity_table_name,
+                cls.telemetry_table_name,
+                cls.alert_table_name,
+            ):
                 cls.client.delete_table(TableName=table_name)
         finally:
             super().tearDownClass()
@@ -434,55 +487,123 @@ class DynamoLocalCompositionServiceTests(
                 aws_region="us-east-1",
                 identity_table=self.identity_table_name,
                 telemetry_table=self.telemetry_table_name,
+                alert_table=self.alert_table_name,
                 key_namespace=uuid.uuid4().hex,
             ),
             dynamodb_client=self.client,
         )
 
-    def test_restart_preserves_bundle_but_not_memory_alert_repository(self):
+    def test_restart_preserves_delivered_outbox_and_evolved_alert(self):
         namespace = uuid.uuid4().hex
         config = RepositoryConfig(
             mode=RepositoryMode.DYNAMODB,
             aws_region="us-east-1",
             identity_table=self.identity_table_name,
             telemetry_table=self.telemetry_table_name,
+            alert_table=self.alert_table_name,
             key_namespace=namespace,
         )
         first = compose_repositories(config, dynamodb_client=self.client)
-        sample = contract_sample()
-        state = contract_state(sample)
-        record = telemetry_record_from_sample(
-            state.trip_id,
-            state.lot_trip_id,
-            sample,
+        trip = contract_trip()
+        assignment = contract_assignment()
+        access = contract_shipment_access()
+        first.identity_repository.register_trip_assignment_and_access(
+            trip,
+            assignment,
+            access,
         )
-        decision = contract_decision_record(sample, state)
-        outbox = contract_alert_outbox_event(decision)
-        first.telemetry_state_repository.commit_processing_bundle(
-            record,
-            state,
-            decision,
-            outbox,
-            expected_revision=None,
+        V2ShipmentLifecycleService(
+            first.identity_repository
+        ).activate_for_shipment(
+            {
+                "tripId": trip.trip_id,
+                "lotTripId": trip.lot_trip_id,
+                "v2DeviceAssignmentId": assignment.assignment_id,
+            }
         )
-        first.alert_repository.save_alert(outbox.alert_candidate)
+        operational = OperationalTelemetryService(
+            TelemetryProcessor(
+                first.identity_repository,
+                first.telemetry_state_repository,
+            ),
+            first.alert_repository,
+        )
+        operational_result = operational.process(
+            {
+                "sample_id": "composition-restart-monitor",
+                "device_id": assignment.device_id,
+                "timestamp": (trip.start_time + timedelta(minutes=1)).isoformat(),
+                "temperature": 9.0,
+            }
+        )
+        processing_result = operational_result.processing_result
+        delivered = operational_result.alert
+        self.assertIsNotNone(delivered)
+        decision = decision_record_from_processing_result(processing_result)
+        outbox = alert_outbox_event_from_candidate(decision, delivered)
+        lifecycle_time = processing_result.telemetry_record.timestamp
+        acknowledged = first.alert_repository.acknowledge_alert(
+            delivered.alert_id,
+            actor_id="contract-driver",
+            acknowledged_at=lifecycle_time + timedelta(minutes=1),
+        )
+        actioned = first.alert_repository.record_action(
+            delivered.alert_id,
+            description="Inspected cooling unit",
+            actor_id="contract-driver",
+            recorded_at=lifecycle_time + timedelta(minutes=2),
+        )
+        evolved = first.alert_repository.resolve_alert(
+            delivered.alert_id,
+            actor_id="contract-organization",
+            resolved_at=lifecycle_time + timedelta(minutes=3),
+            resolution_note="Disposition complete",
+        )
+        self.assertEqual(acknowledged.status.value, "ACKNOWLEDGED")
+        self.assertEqual(len(actioned.actions), 1)
 
         restarted = compose_repositories(config, dynamodb_client=self.client)
 
         self.assertEqual(
-            restarted.telemetry_state_repository.get_live_state(state.lot_trip_id),
-            state,
+            restarted.telemetry_state_repository.get_live_state(trip.lot_trip_id),
+            processing_result.live_state,
         )
         self.assertEqual(
             restarted.telemetry_state_repository.get_decision(decision.decision_id),
             decision,
         )
         self.assertEqual(
-            restarted.telemetry_state_repository.get_outbox_event(outbox.event_id),
-            outbox,
+            restarted.telemetry_state_repository.get_outbox_event(
+                outbox.event_id
+            ).delivery_status,
+            OutboxDeliveryStatus.DELIVERED,
         )
-        self.assertIsNone(
-            restarted.alert_repository.get_alert(outbox.alert_candidate.alert_id)
+        self.assertEqual(
+            restarted.alert_repository.get_alert(outbox.alert_candidate.alert_id),
+            evolved,
+        )
+        lifecycle = AlertLifecycleService(
+            restarted.alert_repository,
+            shipment_access_resolver(restarted.shipment_access_repository),
+        )
+        organization = AlertActor(
+            actor_id="organization-user",
+            role=AlertActorRole.ORGANIZATION,
+            organization_id=access.organization_id,
+        )
+        driver = AlertActor(
+            actor_id="driver-user",
+            role=AlertActorRole.DRIVER,
+            organization_id=access.organization_id,
+            driver_id=access.driver_id,
+        )
+        self.assertEqual(
+            lifecycle.get_alert(access.lot_trip_id, evolved.alert_id, organization),
+            evolved,
+        )
+        self.assertEqual(
+            lifecycle.get_alert(access.lot_trip_id, evolved.alert_id, driver),
+            evolved,
         )
 
 
