@@ -1,0 +1,184 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Transform": "AWS::Serverless-2016-10-31",
+  "Description": "VITAE durable alert outbox recovery worker",
+  "Parameters": {
+    "TelemetryTableName": {"Type": "String"},
+    "AlertTableName": {"Type": "String"},
+    "DynamoKeyNamespace": {"Type": "String", "Default": ""},
+    "ScheduleExpression": {"Type": "String", "Default": "rate(1 minute)"},
+    "ScheduleState": {
+      "Type": "String",
+      "Default": "DISABLED",
+      "AllowedValues": ["ENABLED", "DISABLED"]
+    },
+    "LogRetentionDays": {"Type": "Number", "Default": 14}
+  },
+  "Resources": {
+    "SchedulerInvocationFailureQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true
+      }
+    },
+    "LambdaExecutionFailureQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true
+      }
+    },
+    "OutboxWorkerFunction": {
+      "Type": "AWS::Serverless::Function",
+      "Metadata": {
+        "BuildMethod": "makefile"
+      },
+      "Properties": {
+        "CodeUri": "../../SD/backend",
+        "Handler": "outbox_worker.lambda_handler",
+        "Runtime": "python3.12",
+        "Architectures": ["x86_64"],
+        "MemorySize": 256,
+        "Timeout": 60,
+        "ReservedConcurrentExecutions": 1,
+        "FunctionName": {"Fn::Sub": "${AWS::StackName}-outbox-worker"},
+        "Environment": {
+          "Variables": {
+            "VITAE_AWS_REGION": {"Ref": "AWS::Region"},
+            "VITAE_TELEMETRY_TABLE": {"Ref": "TelemetryTableName"},
+            "VITAE_ALERT_TABLE": {"Ref": "AlertTableName"},
+            "VITAE_DYNAMODB_KEY_NAMESPACE": {"Ref": "DynamoKeyNamespace"},
+            "VITAE_OUTBOX_BATCH_SIZE": "25",
+            "VITAE_OUTBOX_LEASE_SECONDS": "120",
+            "VITAE_OUTBOX_BASE_DELAY_SECONDS": "5",
+            "VITAE_OUTBOX_MAX_DELAY_SECONDS": "900",
+            "VITAE_OUTBOX_MAX_ATTEMPTS": "96"
+          }
+        },
+        "Events": {
+          "OutboxRecoverySchedule": {
+            "Type": "ScheduleV2",
+            "Properties": {
+              "Description": "Invoke the bounded VITAE outbox recovery worker",
+              "ScheduleExpression": {"Ref": "ScheduleExpression"},
+              "State": {"Ref": "ScheduleState"},
+              "FlexibleTimeWindow": {"Mode": "OFF"},
+              "Input": "{\"schemaVersion\":1,\"trigger\":\"eventbridge-scheduler\"}",
+              "DeadLetterConfig": {
+                "Arn": {"Fn::GetAtt": ["SchedulerInvocationFailureQueue", "Arn"]}
+              },
+              "RetryPolicy": {
+                "MaximumEventAgeInSeconds": 300,
+                "MaximumRetryAttempts": 3
+              },
+              "RoleArn": {"Fn::GetAtt": ["OutboxSchedulerRole", "Arn"]}
+            }
+          }
+        },
+        "EventInvokeConfig": {
+          "MaximumEventAgeInSeconds": 300,
+          "MaximumRetryAttempts": 2,
+          "DestinationConfig": {
+            "OnFailure": {
+              "Type": "SQS",
+              "Destination": {"Fn::GetAtt": ["LambdaExecutionFailureQueue", "Arn"]}
+            }
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "ReadAndTransitionOutbox",
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:DescribeTable",
+                  "dynamodb:GetItem",
+                  "dynamodb:UpdateItem",
+                  "dynamodb:Query"
+                ],
+                "Resource": [
+                  {"Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TelemetryTableName}"},
+                  {"Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TelemetryTableName}/index/OutboxWorkIndex"}
+                ]
+              },
+              {
+                "Sid": "PersistExactAlertCandidate",
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:DescribeTable",
+                  "dynamodb:GetItem",
+                  "dynamodb:TransactWriteItems"
+                ],
+                "Resource": [
+                  {"Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AlertTableName}"}
+                ]
+              },
+              {
+                "Sid": "PublishLambdaExecutionFailure",
+                "Effect": "Allow",
+                "Action": "sqs:SendMessage",
+                "Resource": {"Fn::GetAtt": ["LambdaExecutionFailureQueue", "Arn"]}
+              },
+              {
+                "Sid": "WriteWorkerLogs",
+                "Effect": "Allow",
+                "Action": [
+                  "logs:CreateLogGroup",
+                  "logs:CreateLogStream",
+                  "logs:PutLogEvents"
+                ],
+                "Resource": {"Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "OutboxWorkerLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {"Fn::Sub": "/aws/lambda/${OutboxWorkerFunction}"},
+        "RetentionInDays": {"Ref": "LogRetentionDays"}
+      }
+    },
+    "OutboxSchedulerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "scheduler.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Policies": [{
+          "PolicyName": "InvokeOutboxWorker",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "lambda:InvokeFunction",
+                "Resource": {"Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-outbox-worker"}
+              },
+              {
+                "Effect": "Allow",
+                "Action": "sqs:SendMessage",
+                "Resource": {"Fn::GetAtt": ["SchedulerInvocationFailureQueue", "Arn"]}
+              }
+            ]
+          }
+        }]
+      }
+    }
+  },
+  "Outputs": {
+    "WorkerFunctionArn": {"Value": {"Fn::GetAtt": ["OutboxWorkerFunction", "Arn"]}},
+    "SchedulerFailureQueueUrl": {"Value": {"Ref": "SchedulerInvocationFailureQueue"}},
+    "LambdaExecutionFailureQueueUrl": {"Value": {"Ref": "LambdaExecutionFailureQueue"}}
+  }
+}
