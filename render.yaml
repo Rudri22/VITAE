@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: vitae-demo
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: VITAE_REPOSITORY_MODE
+        value: memory
+      - key: VITAE_TEMPORAL_RISK_MODE
+        value: disabled

@@ -105,6 +105,14 @@ The default repository mode is memory, so a restart clears V2 state.
 The checked-in users, passwords, and bearer tokens are local demo credentials,
 not production authentication. Do not reuse them in a deployed environment.
 
+### Render Demo
+
+`render.yaml` defines one free Docker web service, `vitae-demo`, that serves the
+same static frontend and backend API. It runs with memory repositories and
+disabled temporal-risk artifacts, so restarts intentionally clear demo state and
+monitoring returns `futureRisk.state = "NOT_CONFIGURED"`. Render supplies `PORT`;
+the application falls back to `8000` locally. Its health check is `GET /healthz`.
+
 Run the small deterministic command-line scenario suite with:
 
 ```powershell

@@ -239,6 +239,18 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.assertEqual(alerts["count"], 1)
         self.assertEqual(alerts["alerts"][0]["alertType"], "EXCURSION_MONITOR")
 
+    def test_health_check_is_public_and_does_not_mutate_v2_state(self):
+        assignments_before = self.state_repository.get_device_assignments(
+            "device-sim-001"
+        )
+        status, body = self.get_path("/healthz", token=None)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"status": "ok"})
+        self.assertEqual(
+            self.state_repository.get_device_assignments("device-sim-001"),
+            assignments_before,
+        )
+
     def test_monitoring_requires_authentication_before_inference(self):
         predictor = _Predictor(None)
         monitoring = MonitoringService(

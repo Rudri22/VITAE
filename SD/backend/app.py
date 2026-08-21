@@ -1,6 +1,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -209,8 +210,21 @@ except ImportError:
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
 
-HOST = "127.0.0.1"
-PORT = 8000
+HOST = "0.0.0.0"
+
+
+def _port_from_environment():
+    raw_port = os.environ.get("PORT", "8000").strip()
+    try:
+        port = int(raw_port)
+    except ValueError as error:
+        raise RuntimeError("PORT must be an integer") from error
+    if not 1 <= port <= 65535:
+        raise RuntimeError("PORT must be between 1 and 65535")
+    return port
+
+
+PORT = _port_from_environment()
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 
 V2_PROTOTYPE_TRIP = TripIdentity(
@@ -473,6 +487,10 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+
+        if path == "/healthz":
+            self.send_json({"status": "ok"})
+            return
 
         if path == "/api/v2/catalog/product-contexts":
             contexts = V2_PRODUCT_CATALOG_SERVICE.list_supported_contexts()
