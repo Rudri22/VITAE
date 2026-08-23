@@ -633,17 +633,32 @@ class ApiHandler(BaseHTTPRequestHandler):
             user = self.require_organization_user()
             if not user:
                 return
-            self.send_json(get_organization_foundation_dashboard_data(user["organizationId"]))
+            self.send_json(
+                get_organization_foundation_dashboard_data(
+                    user["organizationId"], V2_STATE_REPOSITORY
+                )
+            )
             return
 
         organization_collections = {
-            "/api/organization/shipments": ("shipments", get_organization_shipments),
             "/api/organization/drivers": ("drivers", get_organization_drivers),
             "/api/organization/sensors": ("sensors", get_organization_sensors),
             "/api/organization/alerts": ("alerts", get_organization_alerts),
             "/api/organization/tickets": ("tickets", get_organization_tickets),
             "/api/organization/reports": ("reports", get_organization_reports),
         }
+        if path == "/api/organization/shipments":
+            user = self.require_organization_user()
+            if not user:
+                return
+            self.send_json(
+                {
+                    "shipments": get_organization_shipments(
+                        user["organizationId"], V2_STATE_REPOSITORY
+                    )
+                }
+            )
+            return
         if path in organization_collections:
             user = self.require_organization_user()
             if not user:
@@ -657,7 +672,15 @@ class ApiHandler(BaseHTTPRequestHandler):
             if not user:
                 return
             try:
-                self.send_json({"shipment": get_organization_shipment(user["organizationId"], path.split("/")[-1])})
+                self.send_json(
+                    {
+                        "shipment": get_organization_shipment(
+                            user["organizationId"],
+                            path.split("/")[-1],
+                            V2_STATE_REPOSITORY,
+                        )
+                    }
+                )
             except KeyError as error:
                 self.send_json({"error": str(error).strip("'")}, status=404)
             return

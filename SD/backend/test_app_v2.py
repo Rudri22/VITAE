@@ -78,7 +78,10 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.adapter = TelemetryHttpAdapter(service)
         self.patches = (
             patch.object(app, "V2_DEVICE_INGEST_TOKEN", "test-device-token"),
+            patch.object(app, "V2_IDENTITY_REPOSITORY", state_repository),
+            patch.object(app, "V2_TELEMETRY_PROCESSOR", processor),
             patch.object(app, "V2_TELEMETRY_HTTP_ADAPTER", self.adapter),
+            patch.object(app, "V2_STATE_REPOSITORY", state_repository),
             patch.object(
                 app,
                 "V2_MONITORING_SERVICE",
@@ -285,6 +288,65 @@ class V2SensorDataRouteTests(unittest.TestCase):
         )
         self.assertEqual(alerts["count"], 1)
         self.assertEqual(alerts["alerts"][0]["alertType"], "EXCURSION_MONITOR")
+
+    def test_organization_shipment_reads_use_authoritative_v2_telemetry(self):
+        dashboard_status, before = self.get_path("/api/organization/dashboard")
+        self.assertEqual(dashboard_status, 200)
+        mapped_before = next(
+            item for item in before["shipments"]
+            if item["shipmentId"] == "ship-a-v2-001"
+        )
+        self.assertIsNone(mapped_before["temperature"])
+        self.assertIsNone(mapped_before["conditionStatus"])
+        self.assertEqual(mapped_before["temperatureHistory"], [])
+        accepted_status, _ = self.post(
+            {
+                "sample_id": "organization-safe-reading",
+                "device_id": "device-sim-001",
+                "timestamp": "2026-08-19T18:00:00Z",
+                "temperature": 6.0,
+                "battery_level": 84.0,
+                "latitude": 33.88,
+                "longitude": 35.50,
+            }
+        )
+        self.assertEqual(accepted_status, 200)
+
+        endpoints = (
+            ("/api/organization/dashboard", lambda body: body["shipments"]),
+            ("/api/organization/shipments", lambda body: body["shipments"]),
+            (
+                "/api/organization/shipments/ship-a-v2-001",
+                lambda body: [body["shipment"]],
+            ),
+        )
+        for path, records in endpoints:
+            with self.subTest(path=path):
+                status, body = self.get_path(path)
+                self.assertEqual(status, 200)
+                item = next(
+                    record for record in records(body)
+                    if record["shipmentId"] == "ship-a-v2-001"
+                )
+                self.assertEqual(item["temperature"], 6.0)
+                self.assertEqual(item["batteryLevel"], 84.0)
+                self.assertEqual(item["conditionStatus"], "SAFE")
+                self.assertEqual(
+                    item["conditionReasonCode"],
+                    "TEMPERATURE_WITHIN_NORMAL_RANGE",
+                )
+                self.assertEqual(
+                    item["lastUpdated"], "2026-08-19T18:00:00+00:00"
+                )
+                self.assertEqual(
+                    item["temperatureHistory"],
+                    [
+                        {
+                            "timestamp": "2026-08-19T18:00:00+00:00",
+                            "value": 6.0,
+                        }
+                    ],
+                )
 
     def test_health_check_is_public_and_does_not_mutate_v2_state(self):
         assignments_before = self.state_repository.get_device_assignments(

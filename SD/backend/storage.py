@@ -857,8 +857,12 @@ def get_admin_foundation_dashboard_data():
     }
 
 
-def get_organization_foundation_dashboard_data(organization_id):
-    shipments = get_organization_shipments(organization_id)
+def get_organization_foundation_dashboard_data(
+    organization_id, telemetry_state_repository=None
+):
+    shipments = get_organization_shipments(
+        organization_id, telemetry_state_repository
+    )
     active = [item for item in shipments if item.get("status") in {"active", "in_transit", "at_risk", "delayed", "arrived"}]
     alerts = get_organization_alerts(organization_id)
     drivers = get_organization_drivers(organization_id)
@@ -1668,18 +1672,74 @@ def support_hospital_signal(org):
     }
 
 
-def shipment_monitor_record(shipment):
-    latest = shipment.get("latestReading") or {}
-    temperature = shipment.get("temperature", latest.get("temperature"))
-    battery_level = shipment.get("batteryLevel", latest.get("batteryLevel"))
+def shipment_monitor_record(shipment, telemetry_state_repository=None):
+    lot_trip_id = shipment.get("lotTripId")
+    authoritative_state = None
+    authoritative_history = None
+    if telemetry_state_repository is not None and lot_trip_id:
+        authoritative_state = telemetry_state_repository.get_live_state(lot_trip_id)
+        authoritative_history = (
+            telemetry_state_repository.get_telemetry_history(lot_trip_id)
+            if authoritative_state is not None
+            else ()
+        )
+        if authoritative_state is not None:
+            authoritative_history = authoritative_history[
+                : authoritative_state.revision
+            ]
+            if (
+                not authoritative_history
+                or authoritative_history[-1].sample_id
+                != authoritative_state.last_sample_id
+            ):
+                raise ValueError(
+                    "Authoritative telemetry history does not match LiveState"
+                )
+
+    if authoritative_history is not None:
+        readings = list(authoritative_history)
+        latest_record = readings[-1] if readings else None
+        latest = (
+            {
+                "temperature": latest_record.temperature,
+                "batteryLevel": latest_record.battery_level,
+                "gps": (
+                    {"lat": latest_record.latitude, "lng": latest_record.longitude}
+                    if latest_record.latitude is not None
+                    and latest_record.longitude is not None
+                    else None
+                ),
+                "timestamp": authoritative_state.last_updated.isoformat(),
+            }
+            if latest_record is not None
+            else {}
+        )
+        temperature = (
+            authoritative_state.latest_temperature
+            if authoritative_state is not None
+            else None
+        )
+        battery_level = latest_record.battery_level if latest_record else None
+    else:
+        latest = shipment.get("latestReading") or {}
+        temperature = shipment.get("temperature", latest.get("temperature"))
+        battery_level = shipment.get("batteryLevel", latest.get("batteryLevel"))
+        readings = shipment.get("readings") or []
+
     safe_min = shipment.get("safeTemperatureMin")
     safe_max = shipment.get("safeTemperatureMax")
-    readings = shipment.get("readings") or []
     history = readings[-6:] if readings else [latest] if latest else []
     destination_id = shipment.get("destinationHospitalId") or shipment.get("organizationId")
     destination_gps = shipment.get("destinationGps") or (ORGANIZATIONS.get(destination_id) or {}).get("gps")
     origin_gps = shipment.get("originGps") or ORIGIN_LOCATIONS.get(shipment.get("origin"))
     current_gps = latest.get("gps")
+    last_updated = (
+        authoritative_state.last_updated.isoformat()
+        if authoritative_history is not None and authoritative_state is not None
+        else None
+        if authoritative_history is not None
+        else shipment.get("lastUpdated") or latest.get("timestamp")
+    )
     route_points = [point for point in [
         {"label": shipment.get("origin") or "Origin", "gps": origin_gps},
         {"label": shipment.get("currentLocation") or "Current truck location", "gps": current_gps},
@@ -1719,20 +1779,48 @@ def shipment_monitor_record(shipment):
         "batteryLevel": battery_level,
         "batteryStatus": battery_status(battery_level),
         "coolingUnitStatus": shipment.get("coolingUnitStatus") or ("warning" if battery_status(battery_level) != "normal" else "normal"),
-        "lastUpdated": shipment.get("lastUpdated") or latest.get("timestamp"),
+        "lastUpdated": last_updated,
         "expectedArrival": shipment.get("expectedArrival"),
+        "conditionStatus": (
+            authoritative_state.status.value if authoritative_state is not None else None
+        ),
+        "conditionReasonCode": (
+            authoritative_state.reason_code if authoritative_state is not None else None
+        ),
         "riskLevel": shipment.get("riskLevel") or get_risk_level(shipment),
         "riskClassification": shipment.get("riskClassification") or {"low": "safe", "medium": "monitor", "high": "at_risk", "critical": "critical"}.get(shipment.get("riskLevel") or get_risk_level(shipment), "monitor"),
         "alerts": deepcopy(shipment.get("alerts", [])),
         "supplies": deepcopy(shipment.get("supplies") or [shipment.get("medicineType")] if shipment.get("medicineType") else []),
         "timeline": deepcopy(shipment.get("timeline", [])),
         "temperatureHistory": [
-            {"timestamp": reading.get("timestamp"), "value": reading.get("temperature")}
+            {
+                "timestamp": (
+                    reading.timestamp.isoformat()
+                    if authoritative_history is not None
+                    else reading.get("timestamp")
+                ),
+                "value": (
+                    reading.temperature
+                    if authoritative_history is not None
+                    else reading.get("temperature")
+                ),
+            }
             for reading in history
             if reading
         ],
         "batteryHistory": [
-            {"timestamp": reading.get("timestamp"), "value": reading.get("batteryLevel")}
+            {
+                "timestamp": (
+                    reading.timestamp.isoformat()
+                    if authoritative_history is not None
+                    else reading.get("timestamp")
+                ),
+                "value": (
+                    reading.battery_level
+                    if authoritative_history is not None
+                    else reading.get("batteryLevel")
+                ),
+            }
             for reading in history
             if reading
         ],
@@ -2378,8 +2466,8 @@ PRODUCT_HANDLING_PROFILES = {
 TERMINAL_SHIPMENT_STATUSES = {"delivered", "cancelled", "rejected"}
 
 
-def organization_shipment_record(shipment):
-    record = shipment_monitor_record(shipment)
+def organization_shipment_record(shipment, telemetry_state_repository=None):
+    record = shipment_monitor_record(shipment, telemetry_state_repository)
     driver = DRIVERS.get(shipment.get("driverId")) or {}
     sensor = SENSORS.get(shipment.get("sensorId")) or {}
     record.update({
@@ -2428,12 +2516,20 @@ def _parse_datetime(value, label):
         raise ValueError(f"{label} must be a valid date and time")
 
 
-def get_organization_shipments(organization_id):
-    return [organization_shipment_record(item) for item in _organization_shipments(organization_id)]
+def get_organization_shipments(organization_id, telemetry_state_repository=None):
+    return [
+        organization_shipment_record(item, telemetry_state_repository)
+        for item in _organization_shipments(organization_id)
+    ]
 
 
-def get_organization_shipment(organization_id, shipment_id):
-    return organization_shipment_record(_owned_record(SHIPMENTS, shipment_id, organization_id, "Shipment"))
+def get_organization_shipment(
+    organization_id, shipment_id, telemetry_state_repository=None
+):
+    return organization_shipment_record(
+        _owned_record(SHIPMENTS, shipment_id, organization_id, "Shipment"),
+        telemetry_state_repository,
+    )
 
 
 def get_v2_alert_shipment_access(lot_trip_id):

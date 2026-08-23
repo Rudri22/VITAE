@@ -145,6 +145,29 @@ async function main() {
   assert.doesNotMatch(orgLegacyHtml, /V2 trip lifecycle|V2 monitoring identity/);
   assert.doesNotMatch(driverLegacyHtml, /V2 trip lifecycle|V2 trip/);
 
+  const accepted = mappedShipment({
+    status: "in_transit",
+    tripStatus: "ACTIVE",
+    temperature: 6,
+    conditionStatus: "SAFE",
+    conditionReasonCode: "TEMPERATURE_WITHIN_NORMAL_RANGE",
+    temperatureHistory: [{ timestamp: "2026-08-19T18:00:00Z", value: 6 }],
+  });
+  const acceptedState = organizationState(accepted, "ACTIVE", { status: "SAFE" });
+  acceptedState.data.activeShipments = [accepted];
+  const acceptedDashboard = window.VitaeOrganization.render(acceptedState, "dashboard");
+  const acceptedShipments = window.VitaeOrganization.render(acceptedState, "shipments");
+  assert.match(acceptedDashboard, /Live Shipments[\s\S]*6(?:\.0)?[^<]*C[\s\S]*SAFE/);
+  assert.match(acceptedShipments, /Deterministic status[\s\S]*SAFE/);
+  assert.match(acceptedShipments, /Temperature[\s\S]*6(?:\.0)?[^<]*C/);
+
+  const waiting = mappedShipment({ temperature: null, conditionStatus: null });
+  const waitingState = organizationState(waiting, "ACTIVE", null);
+  waitingState.data.activeShipments = [waiting];
+  const waitingHtml = window.VitaeOrganization.render(waitingState, "shipments");
+  assert.match(waitingHtml, /Deterministic status[\s\S]*No telemetry yet/);
+  assert.match(waitingHtml, /Temperature[\s\S]*No reading/);
+
   await lifecycleRefreshContract();
   console.log("V2 lifecycle view contract tests passed");
 }

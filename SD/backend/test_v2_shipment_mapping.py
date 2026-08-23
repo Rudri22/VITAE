@@ -31,9 +31,12 @@ class V2ShipmentMappingTests(unittest.TestCase):
                 "shipmentId": "legacy-only",
                 "organizationId": "hospital-a",
                 "status": "planned",
+                "temperature": 5.0,
             }
         )
         self.assertIsNone(record["lotTripId"])
+        self.assertEqual(record["temperature"], 5.0)
+        self.assertIsNone(record["conditionStatus"])
 
 
 if __name__ == "__main__":
