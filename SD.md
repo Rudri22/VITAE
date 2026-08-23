@@ -58,27 +58,33 @@ operational threshold.
 ## Architecture
 
 ```text
-Telemetry
-  -> validation and active-trip identity/rule resolution
-  -> ProductRules evaluation
-  -> atomic TelemetryRecord + LiveState + StatusDecisionRecord
-  -> optional exact AlertOutboxEvent
-  -> synchronous alert delivery and background recovery
-  -> authenticated monitoring
-
-ACTIVE trip
-  -> one caller-supplied, timezone-aware completed_at
-  -> atomic TripCompletionRepository
-  -> COMPLETED trip + inactive assignment + final LiveState snapshot
-  -> immutable CompletedTripOutcome
-
-Completed histories
-  -> leakage-safe temporal examples at cutoff T
-  -> approved simulator training corpus
-  -> calibrated logistic-regression artifact
-  -> trusted, read-only inference over an ACTIVE prefix
-  -> optional 30-minute adverse-event probability in monitoring
+Physical Sensor / Simulator
+            |
+            v
+Telemetry Ingestion -> validation -> Accepted Telemetry
+            |                         |
+            |              +----------+-----------+
+            |              |          |           |
+            |        ProductRules  Journey ML  Device/Data Health
+            |              |          |
+            +--------------+----------+
+                           v
+                 Operational Decision
+                           |
+                  Journey + Route Evidence
+                           |
+             Facility Capability + Candidates
+                           |
+                Rerouting Recommendation
+                           |
+                 Organization Dashboard
 ```
+
+The fixed 30-minute forecast remains a compatibility signal. When valid
+journey-wide risk exists, the journey forecast is primary and the 30-minute
+result is supporting detail. ProductRules remain authoritative for current
+condition. Device freshness is never treated as product risk. See `DEMO.md` for
+the final local walkthrough and failure fallbacks.
 
 The backend serves the static frontend, HTTP API, and local role-scoped demo from
 one Python process. Repository protocols isolate domain services from memory,
@@ -274,17 +280,204 @@ this state as "all tests pass."
 
 ## Demo / Engineering Readiness
 
+### Unified Operational Decisions
+
+VITAE keeps deliberately separate inputs: ProductRules determine the
+authoritative current status; the legacy optional ML artifact estimates the
+probability of an adverse deterministic status in the next 30 minutes; and the
+optional journey-aware artifact estimates deterioration before destination when
+authoritative remaining-route duration is available. The
+read-only operational decision engine combines those inputs into an explainable
+recommendation (`CONTINUE`, `MONITOR`, `INTERVENE`, `REROUTE`, `EXPEDITE`, or
+`STOP_OR_REPLACE`). A risk category is an engineering/demo interpretation of
+the raw probability, configured centrally with
+`VITAE_DECISION_MEDIUM_RISK_THRESHOLD` and
+`VITAE_DECISION_HIGH_RISK_THRESHOLD` (defaults `0.20` and `0.50`). These are
+not clinical thresholds and must be recalibrated from real operational data.
+
+### Journey-Aware Forecast
+
+The variable-horizon target is `deteriorates_before_destination`: from an
+eligible SAFE or MONITOR cutoff, any later persisted AT_RISK, CRITICAL, or
+RULE_VIOLATION decision at or before the independently planned arrival is
+positive. Offline labels use the simulator's scheduled trip end, never the
+deterioration time. Runtime inference uses only backend route-provider
+`remainingRouteMinutes`; it does not infer duration from elapsed time,
+straight-line distance, or an assumed speed.
+
+Journey-risk v1 reuses the exact leakage-safe telemetry prefix features from the
+30-minute model and adds one legitimate cutoff-time input,
+`remaining_journey_minutes`. Logistic regression, gradient boosting, and a
+calibrated probability average are evaluated on the same deterministic
+trip-grouped split with equal-trip weighting. Selection prioritizes recall and
+F2 because missed adverse trajectories matter more than extra review, while
+retaining logistic regression when added complexity has no material safety
+benefit. Calibration and selection use validation data only; test data is final
+evaluation. The 0.20/0.50 categories remain centralized engineering demo policy
+thresholds, not clinically approved risk bands.
+
+The API retains `futureRisk` for compatibility and exposes the same fixed result
+as `futureRisk30m`. `journeyRisk` is a separate object with raw probability,
+explicit `UNTIL_DESTINATION` horizon, route minutes, model/source metadata, and
+simulator limitations. The decision engine prefers a valid journey forecast and
+otherwise marks the 30-minute result as `FIXED_30_MINUTE_FALLBACK`; it never
+presents that fallback as trip-wide probability. Rerouting consumes only the
+already-selected forecast and never performs inference itself.
+
+All journey model metrics are **SIMULATOR-BASED ENGINEERING EVALUATION**. They
+are not real-world performance and not clinical validation. The simulator is
+structurally simpler than real cold-chain operations, so even perfect held-out
+simulator separation is a warning about simulator artifacts rather than a
+performance claim. Real-device histories, external validation, drift monitoring,
+and stakeholder-approved tradeoffs are still required.
+
+The current V2 trip provides origin, destination, telemetry, elapsed time, and
+the latest accepted GPS coordinates when the device supplies them. Exact legacy
+shipment/facility links can additionally provide source and destination
+coordinates. An optional backend `RouteDurationProvider` can obtain road route
+duration and distance without exposing its credential to the browser. The
+default is disabled, so route values remain null and monitoring remains usable.
+Google Routes v2 can be selected with `VITAE_ROUTE_PROVIDER=google_routes` and
+`VITAE_GOOGLE_ROUTES_API_KEY`; `VITAE_ROUTE_CACHE_TTL_SECONDS` (default 300) and
+`VITAE_ROUTE_TIMEOUT_SECONDS` (default 5) bound the in-process cache and request.
+If the key is absent, routing remains disabled rather than breaking monitoring.
+Tests use fake transports and never call a live routing service.
+
+Remaining route minutes use accepted GPS to destination provider evidence.
+Total route minutes use source to destination provider evidence. Estimated
+journey progress is `1 - remaining_route_distance / total_route_distance`, using
+the distances from those two route responses. It is an engineering route-based
+estimate, not a GPS projection; it stays null when routes are missing, unavailable,
+or logically inconsistent. Traffic-dependent duration subtraction is not used.
+Straight-line distance is retained separately as a clearly labeled fallback and
+is never presented as ETA. Remaining product viability is still not modeled.
+
+The facility candidate provider reads existing application facility records; it
+does not invent hospitals. Alternatives must be receiving facilities owned by
+the shipment organization and must have a capability profile that explicitly
+supports the shipment's product identifier. The seed capability assignments are
+neutral engineering/demo metadata, not verified clinical claims about named
+institutions. Missing or incompatible capability evidence fails closed.
+
+Rerouting uses deterministic constrained ranking, not reinforcement learning or
+an opaque ranking model. Ineligible facilities are rejected. Comparable real
+route duration always takes precedence; a geometrically closer candidate cannot
+override a worse real route. When route data is unavailable, comparable
+straight-line distances may be used and are labeled fallback evidence. A
+candidate must improve route duration by at least 5 minutes or straight-line
+distance by at least 1 km before it is considered better. These values can be
+configured with `VITAE_REROUTE_MIN_ETA_IMPROVEMENT_MINUTES` and
+`VITAE_REROUTE_MIN_DISTANCE_IMPROVEMENT_KM`. The result is one of
+`REROUTE_AVAILABLE`, `REROUTE_RECOMMENDED`, `NO_BETTER_ALTERNATIVE`, or
+`INSUFFICIENT_ROUTE_DATA`, with the current destination, candidate, comparison
+metric, routing evidence quality, and explanation returned by the backend.
+Provider timeout, malformed response, quota failure, or missing route/capability
+data never forces a reroute. Simulator-trained forecast results remain
+engineering proof of concept only and do not establish clinical or real-world
+predictive accuracy.
+
 Safe engineering demonstrations include creating an optional V2-monitored
 shipment from the Organization UI, selecting the backend catalog context and an
 available sensor, progressing `PLANNED -> ACTIVE -> COMPLETED`, ingesting or
 simulating telemetry, observing deterministic condition changes, using alert
 acknowledge/action/resolve controls, retaining a completed outcome, and showing
 the optional 30-minute probability when a trusted simulator-trained artifact is
-configured. The UI keeps current condition and future forecast visually distinct.
+configured, and journey risk when a separately trusted journey artifact and
+route duration are available. The UI keeps current condition, journey risk, and
+the legacy 30-minute forecast visually distinct.
 
 Do not present the prototype as proof of real-world ML accuracy, clinical
 validation, production security, or approved operational risk bands. The local
 authentication data and single-process HTTP server are demo infrastructure.
+
+## Real-Device Engineering Pilot
+
+The physical and simulator paths now converge on the same accepted-telemetry
+pipeline:
+
+```text
+Physical temperature sensor -> hardware-neutral gateway -> POST /api/v2/sensor-data
+  -> telemetry validation -> ProductRules -> atomic state/decision/outbox commit
+  -> optional ML inference -> operational decision -> Organization monitoring UI
+
+Simulator -> OperationalTelemetryService -> the same validation and commit path
+```
+
+The prototype transport is HTTPS JSON. A gateway authenticates with a dedicated
+Bearer token from `VITAE_DEVICE_INGEST_TOKEN`; the server fails closed when that
+token is not configured. The reference `TemperatureSensor` boundary and
+`DeviceTelemetryGateway` live in `SD/backend/real_device_gateway.py`. Configure
+the gateway with `VITAE_DEVICE_INGEST_URL`, `VITAE_DEVICE_INGEST_TOKEN`, and
+`VITAE_DEVICE_ID`. Hardware-specific sensor or serial code belongs outside the
+domain modules and only needs to implement `read_temperature_celsius()`.
+
+The minimal official payload is:
+
+```json
+{
+  "sample_id": "device-generated-unique-id",
+  "device_id": "registered-device-id",
+  "timestamp": "2026-08-23T18:00:00Z",
+  "temperature": 6.0,
+  "source": "REAL_DEVICE"
+}
+```
+
+`battery_level`, `latitude` plus `longitude`, and `device_health` remain
+optional. Missing facts are left null, never invented. The server resolves the
+authoritative active trip and lot-trip from the registered device assignment;
+client-supplied trip or product identity is not trusted. Timestamps must be
+timezone-aware, no more than five minutes ahead of receipt, and strictly newer
+than the accepted live state. The `(device_id, sample_id)` key remains
+idempotent. Provenance is one of `SIMULATOR`, `REAL_DEVICE`, `MANUAL_TEST`, or
+`REPLAY`; older telemetry documents deserialize as `MANUAL_TEST`. Provenance
+does not change ProductRules thresholds.
+
+The Organization monitoring view shows the latest telemetry source and a
+separate freshness label. Missing or delayed device data is not interpreted as
+product deterioration. Only accepted records enter deterministic state or ML
+history. The fixed 30-minute model can run only when its existing prefix feature
+contract is satisfied. Journey risk remains unavailable when trusted remaining
+route duration is absent; the system does not fabricate GPS, ETA, battery, or
+device-health values.
+
+### Repeatable Safe Demo
+
+1. Register and activate a demo shipment/device assignment using non-medical
+   materials and an ambient temperature sensor.
+2. Start VITAE locally with a freshly generated device-ingest token, then start
+   a hardware adapter configured with the same token and registered device ID.
+3. Observe a stable ambient/reference reading, its `REAL DEVICE` provenance,
+   current data freshness, and the ProductRules-authoritative status.
+4. Apply a controlled, non-hazardous environmental temperature change and let
+   the real sensor report it. Do not manually manufacture telemetry or outcomes.
+5. Observe accepted history, current status, any available ML forecast, alert,
+   and operational/rerouting recommendation update. Route/facility fallbacks are
+   engineering demo evidence, not a claim that a facility will accept a product.
+6. Complete the trip explicitly and export the pilot session for offline review.
+
+### Pilot Capture and Evaluation
+
+`SD/backend/pilot_validation.py` emits a versioned JSON session document and a
+CSV validation table. Raw trip and device identifiers are replaced with stable
+salted hashes; the caller keeps the salt outside the export. The session document
+preserves accepted telemetry, deterministic decisions, model observations,
+planned arrival, actual completion, operational actions, and separately recorded
+known events. It never exports credentials.
+
+Each validation row keeps the prediction at cutoff separate from the observed
+later outcome. An adverse outcome means a persisted `AT_RISK`, `CRITICAL`, or
+`RULE_VIOLATION` ProductRules decision after the prediction and within its
+declared forecast horizon, capped by authoritative completion. Manual known events are retained as audit context and
+are not silently turned into labels or model inputs. Simulator and real/pilot
+exports remain separate. The evaluator always reports raw trip/example/class
+counts and withholds rate metrics until there are at least 20 independent trips
+and both outcome classes. Its simulator-versus-pilot comparison is descriptive
+only; it is not a formal drift test and does not trigger retraining.
+
+**REAL-DEVICE PILOT != CLINICAL VALIDATION.**
+
+**SIMULATOR METRICS != REAL-WORLD ACCURACY.**
 
 ## Remaining Work
 
@@ -292,7 +485,7 @@ authentication data and single-process HTTP server are demo infrastructure.
   making performance claims.
 - Have product/clinical stakeholders define acceptable false-positive and
   false-negative tradeoffs before approving any risk-band policy; revisit the
-  30-minute horizon with that evidence.
+  journey-wide and 30-minute horizons with that evidence.
 - Run the conditional DynamoDB Local integration suite when its endpoint is
   available.
 - Resolve or formally waive the Python 3.14 embedded-interpreter worker-package

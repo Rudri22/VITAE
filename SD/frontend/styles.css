@@ -4828,19 +4828,46 @@ a:focus-visible {
 .org-v2-monitor { display: grid; gap: var(--vitae-space-2); padding: var(--vitae-space-2); }
 .org-v2-monitor > header { align-items: flex-start; margin-bottom: 0; }
 .org-v2-monitor > header p { margin: var(--vitae-space-1) 0 0; color: var(--vitae-muted); font-size: .78rem; }
-.org-monitor-signal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: var(--vitae-space-2); }
+.org-monitor-primary-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr) minmax(0, 1.25fr); align-items: stretch; gap: var(--vitae-space-2); }
 .org-monitor-signal { min-width: 0; min-height: 176px; display: flex; flex-direction: column; align-items: flex-start; gap: var(--vitae-space-1); padding: var(--vitae-space-3); border: 1px solid var(--vitae-border); border-radius: var(--vitae-radius); background: var(--vitae-surface); }
 .org-monitor-current { border-top: 4px solid var(--vitae-brand); }
 .org-monitor-future { border-top: 4px solid var(--vitae-muted); background: var(--vitae-surface-soft); }
+.org-monitor-journey { border-top: 4px solid var(--vitae-accent); background: var(--vitae-surface-soft); }
 .org-monitor-signal h3 { margin: 0; color: var(--vitae-muted); font-size: .72rem; font-weight: 800; letter-spacing: 0; text-transform: uppercase; }
 .org-monitor-current-value { min-height: var(--vitae-control-height); display: flex; align-items: center; }
 .org-monitor-current-value .foundation-badge { font-size: 1.5rem; }
 .org-monitor-signal > p { color: var(--vitae-muted); font-size: .76rem; line-height: 1.45; }
-.org-future-risk-probability { color: var(--vitae-brand-strong); font-size: 1.5rem; line-height: 1.2; }
+.org-risk-value { color: var(--vitae-brand-strong); font-size: 1.45rem; line-height: 1.2; }
+.org-risk-value span { margin-left: var(--vitae-space-1); color: var(--vitae-ink); }
 .org-future-risk-unavailable { color: var(--vitae-text); font-size: 1rem; line-height: 1.35; overflow-wrap: anywhere; }
-.org-monitor-future footer { display: grid; gap: var(--vitae-space-1); margin-top: auto; color: var(--vitae-muted); font-size: .68rem; line-height: 1.45; }
+.org-monitor-future footer,
+.org-monitor-journey footer { display: grid; gap: var(--vitae-space-1); margin-top: auto; color: var(--vitae-muted); font-size: .68rem; line-height: 1.45; }
 .org-monitor-future footer time,
 .org-monitor-future footer small { display: block; }
+.org-monitor-decision { border: 2px solid var(--vitae-brand); border-top: 4px solid var(--vitae-brand); background: #f6faf8; }
+.org-monitor-decision > strong { color: var(--vitae-brand-strong); font-size: 1.55rem; line-height: 1.2; overflow-wrap: anywhere; }
+.org-monitor-decision > footer { margin-top: auto; color: var(--vitae-muted); font-size: .68rem; line-height: 1.45; }
+.org-rerouting-panel { padding: var(--vitae-space-3); border-left: 4px solid var(--vitae-accent); background: var(--vitae-surface-soft); }
+.org-rerouting-panel > header { align-items: center; margin: 0 0 var(--vitae-space-2); }
+.org-rerouting-panel > header h3,
+.org-rerouting-panel > h3 { margin: 0; font-size: 1rem; }
+.org-rerouting-panel > header > strong { color: var(--vitae-brand-strong); font-size: 1.15rem; }
+.org-rerouting-panel > dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--vitae-space-2); margin: 0; }
+.org-rerouting-panel > dl > div { min-width: 0; }
+.org-rerouting-panel dd { font-size: .82rem; }
+.org-rerouting-empty { border-left-color: var(--vitae-border); }
+.org-rerouting-empty p { margin: var(--vitae-space-1) 0 0; color: var(--vitae-muted); font-size: .78rem; }
+.org-monitor-supporting { border-top: 1px solid var(--vitae-border); }
+.org-monitor-supporting > summary { padding: var(--vitae-space-2) 0; color: var(--vitae-brand-strong); font-size: .76rem; font-weight: 800; cursor: pointer; }
+.org-additional-forecast { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: var(--vitae-space-2); padding: var(--vitae-space-2); background: var(--vitae-surface-soft); }
+.org-additional-forecast span { color: var(--vitae-muted); font-size: .66rem; font-weight: 800; text-transform: uppercase; }
+.org-additional-forecast strong { font-size: .86rem; }
+.org-additional-forecast small { color: var(--vitae-muted); font-size: .66rem; }
+.org-monitor-model-note { margin-top: var(--vitae-space-2); padding: var(--vitae-space-2); border-top: 1px solid var(--vitae-border); }
+.org-monitor-model-note strong { font-size: .72rem; text-transform: uppercase; }
+.org-monitor-model-note p,
+.org-monitor-model-note small { display: block; margin-top: var(--vitae-space-1); color: var(--vitae-muted); font-size: .7rem; line-height: 1.5; }
+.org-monitor-complete { margin: 0; padding: var(--vitae-space-2); border-left: 4px solid var(--vitae-safe); background: #eef8f2; font-size: .78rem; }
 .org-monitor-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--vitae-border); }
 .org-monitor-detail-grid > div { min-width: 0; padding: var(--vitae-space-2) var(--vitae-space-2) 0 0; }
 .org-v2-monitor dt { color: var(--vitae-muted); font-size: .66rem; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
@@ -4905,7 +4932,9 @@ a:focus-visible {
 }
 
 @media (max-width: 820px) {
-  .org-monitor-signal-grid { grid-template-columns: 1fr; }
+  .org-monitor-primary-grid { grid-template-columns: 1fr; }
+  .org-rerouting-panel > dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .org-additional-forecast { grid-template-columns: 1fr; }
   .org-monitor-signal { min-height: 0; }
   .org-monitor-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .org-cockpit-metrics { grid-template-columns: repeat(2, 1fr); }
@@ -4922,6 +4951,7 @@ a:focus-visible {
   .org-cockpit-metrics article { padding: 9px 10px; }
   .org-cockpit-metrics small { display: none; }
   .org-v2-monitor { gap: var(--vitae-space-2); padding: var(--vitae-space-2); }
+  .org-rerouting-panel > dl { grid-template-columns: 1fr; }
   .org-monitor-signal { padding: var(--vitae-space-2); }
   .org-monitor-detail-grid { grid-template-columns: 1fr; }
   .org-cockpit-workspace { display: flex; flex-direction: column; }

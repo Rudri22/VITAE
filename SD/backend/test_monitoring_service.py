@@ -1,5 +1,5 @@
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:
@@ -9,8 +9,14 @@ try:
         LotTripNotFoundError,
         MonitoringService,
         serialize_future_risk,
+        serialize_journey_risk,
     )
+    from .journey_risk_inference import JourneyRiskPrediction
+    from .journey_risk_examples import JOURNEY_RISK_FEATURE_VERSION, JOURNEY_RISK_LABEL_VERSION, JOURNEY_RISK_TARGET_NAME
+    from .journey_risk_training import JOURNEY_RISK_MODEL_VERSION, JOURNEY_RISK_VALIDATION_STATUS
     from .operational_service import OperationalTelemetryService
+    from .rerouting import Coordinates, RouteCandidate, RouteOptions
+    from .route_duration import RouteEvidence, RouteStatus
     from .simulator import SIMULATION_LOT_TRIP_ID, build_local_environment
     from .temporal_risk_baseline import BASELINE_MODEL_VERSION, TrainingSourceKind
     from .temporal_risk_calibration import CALIBRATION_METHOD
@@ -28,8 +34,14 @@ except ImportError:
         LotTripNotFoundError,
         MonitoringService,
         serialize_future_risk,
+        serialize_journey_risk,
     )
+    from journey_risk_inference import JourneyRiskPrediction
+    from journey_risk_examples import JOURNEY_RISK_FEATURE_VERSION, JOURNEY_RISK_LABEL_VERSION, JOURNEY_RISK_TARGET_NAME
+    from journey_risk_training import JOURNEY_RISK_MODEL_VERSION, JOURNEY_RISK_VALIDATION_STATUS
     from operational_service import OperationalTelemetryService
+    from rerouting import Coordinates, RouteCandidate, RouteOptions
+    from route_duration import RouteEvidence, RouteStatus
     from simulator import SIMULATION_LOT_TRIP_ID, build_local_environment
     from temporal_risk_baseline import BASELINE_MODEL_VERSION, TrainingSourceKind
     from temporal_risk_calibration import CALIBRATION_METHOD
@@ -52,6 +64,26 @@ class _Predictor:
         self.calls.append(lot_trip_id)
         if self.error is not None:
             raise self.error
+        return self.result
+
+
+class _RouteProvider:
+    def __init__(self, options):
+        self.options = options
+        self.calls = []
+
+    def route_options(self, trip, current_coordinates):
+        self.calls.append((trip.lot_trip_id, current_coordinates))
+        return self.options
+
+
+class _JourneyPredictor:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def predict(self, lot_trip_id, remaining_journey_minutes):
+        self.calls.append((lot_trip_id, remaining_journey_minutes))
         return self.result
 
 
@@ -78,6 +110,10 @@ class MonitoringServiceTests(unittest.TestCase):
         self.assertEqual(snapshot.open_alert_count, 0)
         self.assertIsNone(snapshot.latest_alert)
         self.assertIsInstance(snapshot.future_risk, FutureRiskNotConfigured)
+        self.assertEqual(
+            snapshot.operational_decision.recommended_action.value, "MONITOR"
+        )
+        self.assertIsNone(snapshot.operational_decision.current_status)
         self.assertEqual(
             serialize_future_risk(snapshot.future_risk),
             {"state": "NOT_CONFIGURED"},
@@ -207,6 +243,151 @@ class MonitoringServiceTests(unittest.TestCase):
         self.assertNotIn("riskPolicy", document)
         self.assertNotIn("riskBand", document)
 
+    def test_high_risk_and_better_route_produce_explainable_reroute(self):
+        sample = self.raw_sample("safe-route", 0, 6.0)
+        sample.update({"latitude": 33.88, "longitude": 35.50})
+        processed = self.operational_service.process(sample)
+        cutoff = processed.processing_result.telemetry_record.timestamp
+        prediction = TemporalRiskPrediction(
+            prediction_version="temporal-risk-prediction-v1",
+            lot_trip_id=SIMULATION_LOT_TRIP_ID,
+            trip_id=processed.processing_result.telemetry_record.trip_id,
+            cutoff_sample_id="safe-route",
+            cutoff_at=cutoff,
+            horizon_ends_at=cutoff + timedelta(minutes=30),
+            prediction_horizon_minutes=30,
+            adverse_event_probability=0.72,
+            model_version=BASELINE_MODEL_VERSION,
+            calibration_method=CALIBRATION_METHOD,
+            feature_version=TEMPORAL_RISK_FEATURE_VERSION,
+            artifact_manifest_sha256="b" * 64,
+            training_source_kind=TrainingSourceKind.APPROVED_SIMULATOR,
+            performance_scope=SIMULATOR_PERFORMANCE_SCOPE,
+            limitations=("Simulated-only",),
+        )
+        current = route_candidate("current", 70)
+        alternative = route_candidate("alternative", 25)
+        provider = _RouteProvider(RouteOptions(current, (alternative,)))
+        snapshot = MonitoringService(
+            self.environment.repository,
+            self.environment.repository,
+            self.alert_repository,
+            _Predictor(prediction),
+            None,
+            provider,
+        ).get_live_snapshot(SIMULATION_LOT_TRIP_ID)
+
+        self.assertEqual(
+            snapshot.operational_decision.recommended_action.value, "REROUTE"
+        )
+        self.assertEqual(
+            snapshot.operational_decision.rerouting.status.value,
+            "REROUTE_RECOMMENDED",
+        )
+        self.assertEqual(
+            snapshot.operational_decision.rerouting.recommended_candidate,
+            alternative,
+        )
+        self.assertEqual(
+            provider.calls,
+            [(SIMULATION_LOT_TRIP_ID, Coordinates(33.88, 35.50))],
+        )
+
+    def test_route_progress_from_monitoring_context_reaches_late_trip_policy(self):
+        sample = self.raw_sample("late-route", 0, 6.0)
+        sample.update({"latitude": 33.88, "longitude": 35.50})
+        processed = self.operational_service.process(sample)
+        cutoff = processed.processing_result.telemetry_record.timestamp
+        prediction = TemporalRiskPrediction(
+            prediction_version="temporal-risk-prediction-v1",
+            lot_trip_id=SIMULATION_LOT_TRIP_ID,
+            trip_id=processed.processing_result.telemetry_record.trip_id,
+            cutoff_sample_id="late-route",
+            cutoff_at=cutoff,
+            horizon_ends_at=cutoff + timedelta(minutes=30),
+            prediction_horizon_minutes=30,
+            adverse_event_probability=0.72,
+            model_version=BASELINE_MODEL_VERSION,
+            calibration_method=CALIBRATION_METHOD,
+            feature_version=TEMPORAL_RISK_FEATURE_VERSION,
+            artifact_manifest_sha256="c" * 64,
+            training_source_kind=TrainingSourceKind.APPROVED_SIMULATOR,
+            performance_scope=SIMULATOR_PERFORMANCE_SCOPE,
+            limitations=("Simulated-only",),
+        )
+        current = route_candidate("current", 10, distance_meters=1000)
+        total = RouteEvidence(
+            RouteStatus.AVAILABLE,
+            "FAKE_ROUTES",
+            datetime(2026, 8, 23, tzinfo=timezone.utc),
+            "DRIVE",
+            3600,
+            10000,
+        )
+        snapshot = MonitoringService(
+            self.environment.repository,
+            self.environment.repository,
+            self.alert_repository,
+            _Predictor(prediction),
+            route_candidate_provider=_RouteProvider(RouteOptions(current, (), total_route=total)),
+        ).get_live_snapshot(SIMULATION_LOT_TRIP_ID)
+        self.assertAlmostEqual(snapshot.operational_decision.journey_context.progress_fraction, 0.9)
+        self.assertEqual(snapshot.operational_decision.recommended_action.value, "EXPEDITE")
+
+    def test_journey_risk_preferred_over_fixed_fallback_when_route_is_available(self):
+        processed = self.operational_service.process(self.raw_sample("journey-safe", 0, 6.0))
+        cutoff = processed.processing_result.telemetry_record.timestamp
+        fixed = TemporalRiskPrediction(
+            "temporal-risk-prediction-v1", SIMULATION_LOT_TRIP_ID,
+            processed.processing_result.telemetry_record.trip_id, "journey-safe", cutoff,
+            cutoff + timedelta(minutes=30), 30, 0.05, BASELINE_MODEL_VERSION,
+            CALIBRATION_METHOD, TEMPORAL_RISK_FEATURE_VERSION, "a" * 64,
+            TrainingSourceKind.APPROVED_SIMULATOR, SIMULATOR_PERFORMANCE_SCOPE,
+            ("Simulated-only",),
+        )
+        journey = JourneyRiskPrediction(
+            "journey-risk-prediction-v1", SIMULATION_LOT_TRIP_ID, "journey-safe",
+            cutoff, 97.0, 0.72, JOURNEY_RISK_TARGET_NAME, JOURNEY_RISK_MODEL_VERSION,
+            "LOGISTIC", JOURNEY_RISK_FEATURE_VERSION, JOURNEY_RISK_LABEL_VERSION,
+            "b" * 64, TrainingSourceKind.APPROVED_SIMULATOR,
+            JOURNEY_RISK_VALIDATION_STATUS, ("Simulator-only",),
+        )
+        journey_predictor = _JourneyPredictor(journey)
+        snapshot = MonitoringService(
+            self.environment.repository, self.environment.repository,
+            self.alert_repository, _Predictor(fixed),
+            route_candidate_provider=_RouteProvider(
+                RouteOptions(route_candidate("current", 97), (route_candidate("better", 20),))
+            ),
+            journey_risk_service=journey_predictor,
+        ).get_live_snapshot(SIMULATION_LOT_TRIP_ID)
+        self.assertEqual(journey_predictor.calls, [(SIMULATION_LOT_TRIP_ID, 97.0)])
+        self.assertEqual(snapshot.operational_decision.future_risk_probability, 0.72)
+        self.assertEqual(snapshot.operational_decision.future_risk_source, "JOURNEY_AWARE_MODEL")
+        self.assertEqual(snapshot.operational_decision.recommended_action.value, "REROUTE")
+        self.assertEqual(serialize_journey_risk(snapshot.journey_risk)["probability"], 0.72)
+
+    def test_fixed_30_minute_forecast_is_explicit_fallback_without_route_duration(self):
+        processed = self.operational_service.process(self.raw_sample("fallback-safe", 0, 6.0))
+        cutoff = processed.processing_result.telemetry_record.timestamp
+        fixed = TemporalRiskPrediction(
+            "temporal-risk-prediction-v1", SIMULATION_LOT_TRIP_ID,
+            processed.processing_result.telemetry_record.trip_id, "fallback-safe", cutoff,
+            cutoff + timedelta(minutes=30), 30, 0.23, BASELINE_MODEL_VERSION,
+            CALIBRATION_METHOD, TEMPORAL_RISK_FEATURE_VERSION, "a" * 64,
+            TrainingSourceKind.APPROVED_SIMULATOR, SIMULATOR_PERFORMANCE_SCOPE,
+            ("Simulated-only",),
+        )
+        predictor = _JourneyPredictor(None)
+        snapshot = MonitoringService(
+            self.environment.repository, self.environment.repository,
+            self.alert_repository, _Predictor(fixed), journey_risk_service=predictor,
+        ).get_live_snapshot(SIMULATION_LOT_TRIP_ID)
+        self.assertEqual(predictor.calls, [])
+        self.assertEqual(snapshot.operational_decision.future_risk_probability, 0.23)
+        self.assertEqual(snapshot.operational_decision.future_risk_source, "FIXED_30_MINUTE_FALLBACK")
+        self.assertEqual(serialize_journey_risk(snapshot.journey_risk)["reason"], "REMAINING_JOURNEY_DURATION_UNAVAILABLE")
+
     def test_not_predicted_reason_is_exposed_without_changing_monitoring(self):
         result = TemporalRiskNotPredicted(
             lot_trip_id=SIMULATION_LOT_TRIP_ID,
@@ -283,6 +464,25 @@ class MonitoringServiceTests(unittest.TestCase):
             "timestamp": timestamp,
             "temperature": temperature,
         }
+
+def route_candidate(facility_id, eta_minutes, distance_meters=10000):
+    return RouteCandidate(
+        facility_id=facility_id,
+        display_name=facility_id.title(),
+        coordinates=None,
+        eligible=True,
+        eligibility_reason="Eligible test receiving facility.",
+        eta_minutes=eta_minutes,
+        capability_basis="TEST_FIXTURE",
+        route_evidence=RouteEvidence(
+            RouteStatus.AVAILABLE,
+            "FAKE_ROUTES",
+            datetime(2026, 8, 23, tzinfo=timezone.utc),
+            "DRIVE",
+            duration_seconds=eta_minutes * 60,
+            distance_meters=distance_meters,
+        ),
+    )
 
 
 if __name__ == "__main__":

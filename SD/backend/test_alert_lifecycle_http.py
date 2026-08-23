@@ -40,6 +40,7 @@ class V2AlertLifecycleHttpTests(unittest.TestCase):
             "driverId": "driver-aya",
         }
         self.patches = (
+            patch.object(app, "V2_DEVICE_INGEST_TOKEN", "test-device-token"),
             patch.object(app, "V2_TELEMETRY_HTTP_ADAPTER", TelemetryHttpAdapter(operational)),
             patch.object(
                 app,
@@ -328,6 +329,7 @@ class V2AlertLifecycleHttpTests(unittest.TestCase):
                 "timestamp": "2026-08-19T18:00:00Z",
                 "temperature": 6.0,
             },
+            {"Authorization": "Bearer test-device-token"},
         )
         status, monitor = self.request(
             "POST",
@@ -338,6 +340,7 @@ class V2AlertLifecycleHttpTests(unittest.TestCase):
                 "timestamp": "2026-08-19T18:10:00Z",
                 "temperature": 9.0,
             },
+            {"Authorization": "Bearer test-device-token"},
         )
         self.assertEqual(status, 200)
         return monitor["alert"]["alertId"]

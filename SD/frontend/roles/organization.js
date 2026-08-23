@@ -67,76 +67,160 @@
       (item) => item.shipmentId === monitoring.shipmentId,
     );
     if (!monitoring || monitoring.status === "idle" || monitoring.status === "loading") {
-      return `<section class="foundation-panel org-v2-monitor" aria-busy="true"><header><div><span class="foundation-eyebrow">Prototype lot</span><h2>VITAE Live Monitoring - v2</h2></div></header>${window.VitaeUI.empty("Loading live monitoring state.")}</section>`;
+      return `<section class="foundation-panel org-v2-monitor" aria-busy="true" aria-live="polite"><header><div><span class="foundation-eyebrow">Shipment decision support</span><h2>Live shipment monitoring</h2></div></header>${window.VitaeUI.empty("Loading the latest accepted telemetry and decision.")}</section>`;
     }
 
     const payload = monitoring.data;
     if (!payload) {
-      return `<section class="foundation-panel org-v2-monitor"><header><div><span class="foundation-eyebrow">Prototype lot</span><h2>VITAE Live Monitoring - v2</h2></div></header><p class="org-v2-monitor-error" role="alert">${esc(monitoring.error || "Live monitoring is temporarily unavailable.")}</p></section>`;
+      return `<section class="foundation-panel org-v2-monitor"><header><div><span class="foundation-eyebrow">Shipment decision support</span><h2>Live shipment monitoring</h2></div></header><p class="org-v2-monitor-error" role="alert">${esc(monitoring.error || "Live monitoring is temporarily unavailable. The shipment record has not been changed.")}</p></section>`;
     }
 
     const trip = payload.tripIdentity;
     const live = payload.liveState;
     const alert = payload.latestAlert;
     const status = live?.status || "WAITING_FOR_TELEMETRY";
-    const statusLabel = live?.status || "Waiting for telemetry";
+    const statusLabel = live?.status || "No telemetry yet";
     const alertSummary = alert ? `${human(alert.alertType)} · ${human(alert.severity)}` : "No active alert";
+    const journeyAvailable = validJourneyRiskPrediction(payload.journeyRisk);
+    const completed = trip.status === "COMPLETED";
     return `<section class="foundation-panel org-v2-monitor" data-v2-monitor-status="${esc(status)}">
-      <header><div><span class="foundation-eyebrow">${esc(shipment?.shipmentId || trip.lotTripId)}</span><h2>VITAE Live Monitoring - v2</h2><p>${esc(productName(trip.productId))} · ${esc(trip.origin)} → ${esc(trip.destination)}</p></div>${monitoring.status === "error" ? `<span class="org-v2-monitor-stale">Update unavailable</span>` : ""}</header>
-      <div class="org-monitor-signal-grid">
+      <header><div><span class="foundation-eyebrow">${esc(shipment?.shipmentId || trip.lotTripId)}</span><h2>Live shipment monitoring</h2><p>${esc(productName(trip.productId))} · ${esc(trip.origin)} → ${esc(trip.destination)}</p></div>${monitoring.status === "error" ? `<span class="org-v2-monitor-stale">Latest refresh unavailable</span>` : ""}</header>
+      ${completed ? `<p class="org-monitor-complete">Trip completed${trip.completedAt ? ` · ${esc(dateTime(trip.completedAt))}` : ""}. Final accepted condition remains visible for review.</p>` : ""}
+      <div class="org-monitor-primary-grid">
         <article class="org-monitor-signal org-monitor-current" aria-labelledby="org-current-status-title">
-          <h3 id="org-current-status-title">Current status</h3>
+          <h3 id="org-current-status-title">Current condition</h3>
           <div class="org-monitor-current-value">${window.VitaeUI.badge(statusLabel, statusTone(status))}</div>
-          <p>Deterministic ProductRules</p>
+          <p>${live ? "Authoritative ProductRules assessment" : "Waiting for the first accepted device reading"}</p>
         </article>
-        ${futureRiskCard(payload.futureRisk)}
+        ${primaryRiskCard(payload.journeyRisk, payload.futureRisk30m || payload.futureRisk, payload.operationalDecision)}
+        ${operationalDecisionCard(payload.operationalDecision)}
       </div>
-      <dl class="org-monitor-detail-grid">
-        ${monitoringDetail("Delivery workflow", shipment ? window.VitaeUI.badge(shipment.status) : "Unavailable", Boolean(shipment))}
-        ${monitoringDetail("V2 trip lifecycle", window.VitaeUI.badge(trip.status), true)}
-        ${monitoringDetail("Latest temperature", formatTemperature(live?.latestTemperature))}
-        ${monitoringDetail("Excursion used", formatUtilization(live?.excursionUtilization))}
-        ${monitoringDetail("Latest alert", alertSummary)}
-        ${monitoringDetail("Last updated", live?.lastUpdated ? dateTime(live.lastUpdated) : "No telemetry received")}
-      </dl>
+      ${reroutingPanel(payload.operationalDecision?.rerouting, payload.operationalDecision?.journeyContext)}
+      <details class="org-monitor-supporting">
+        <summary>Supporting details</summary>
+        ${journeyAvailable ? additionalForecast(payload.futureRisk30m || payload.futureRisk) : ""}
+        <dl class="org-monitor-detail-grid">
+          ${monitoringDetail("Telemetry", `${telemetrySourceLabel(payload.telemetrySource)} · ${telemetryFreshness(live?.lastUpdated)}`)}
+          ${monitoringDetail("Latest temperature", formatTemperature(live?.latestTemperature))}
+          ${monitoringDetail("Excursion used", formatUtilization(live?.excursionUtilization))}
+          ${monitoringDetail("Latest alert", alertSummary)}
+          ${monitoringDetail("Trip lifecycle", window.VitaeUI.badge(trip.status), true)}
+          ${monitoringDetail("Delivery workflow", shipment ? window.VitaeUI.badge(shipment.status) : "Unavailable", Boolean(shipment))}
+          ${monitoringDetail("Last accepted reading", live?.lastUpdated ? dateTime(live.lastUpdated) : "No telemetry received")}
+          ${journeyDetail(payload.operationalDecision?.journeyContext)}
+        </dl>
+        <div class="org-monitor-model-note"><strong>Decision basis</strong><p>ProductRules assess configured conditions now. Journey ML estimates deterioration before destination. The operational engine recommends what to do; rerouting compares only eligible destinations with available evidence.</p><small>Simulator-based engineering evaluation. Not real-world performance. Not clinical validation.</small></div>
+      </details>
     </section>`;
   }
 
-  function futureRiskCard(value) {
-    const unavailable = (message) => `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="NOT_PREDICTED" aria-labelledby="org-future-risk-title">
-      <h3 id="org-future-risk-title">30-min future risk</h3>
-      <strong class="org-future-risk-unavailable">${esc(message)}</strong>
-      <p>Optional engineering forecast</p>
-    </article>`;
-
-    if (!value || value.state === "NOT_CONFIGURED") {
-      return `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="NOT_CONFIGURED" aria-labelledby="org-future-risk-title">
-        <h3 id="org-future-risk-title">30-min future risk</h3>
-        <strong class="org-future-risk-unavailable">Not configured</strong>
-        <p>Optional engineering forecast</p>
+  function primaryRiskCard(journey, fixed, decision) {
+    if (validJourneyRiskPrediction(journey)) {
+      return `<article class="org-monitor-signal org-monitor-journey" data-journey-risk-state="PREDICTED" aria-labelledby="org-journey-risk-title">
+        <h3 id="org-journey-risk-title">Risk before destination</h3>
+        <strong class="org-risk-value">${riskCategory(decision)} <span>${formatProbability(journey.probability)}</span></strong>
+        <p>Predicted deterioration before the current destination</p>
+        <footer>Remaining route: ${formatDuration(journey.horizonMinutes)}<br><small>Journey-aware ML · simulator-trained engineering model</small></footer>
       </article>`;
     }
-    if (value.state === "NOT_PREDICTED") {
-      return unavailable(futureRiskReason(value.reasonCode));
+    if (validFutureRiskPrediction(fixed)) {
+      return `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="PREDICTED" aria-labelledby="org-future-risk-title">
+        <h3 id="org-future-risk-title">Future risk</h3>
+        <strong class="org-risk-value">${riskCategory(decision)} <span>${formatProbability(fixed.adverseEventProbability)}</span></strong>
+        <p>Predicted deterioration in the next 30 minutes</p>
+        <footer><small>30-minute fallback · simulator-trained engineering model</small></footer>
+      </article>`;
     }
-    if (value.state !== "PREDICTED" || !validFutureRiskPrediction(value)) {
-      return unavailable("Forecast unavailable");
-    }
-
-    const percentage = `${(value.adverseEventProbability * 100).toFixed(1)}%`;
-    const simulatorNote = value.trainingSourceKind === "APPROVED_SIMULATOR"
-      ? `<small>Engineering forecast &middot; Trained on simulated VITAE trips<br>Real-device performance not yet validated &middot; No approved risk-band policy</small>`
-      : `<small>Engineering forecast &middot; No approved risk-band policy</small>`;
-    return `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="PREDICTED" aria-labelledby="org-future-risk-title">
-      <h3 id="org-future-risk-title">30-min future risk</h3>
-      <strong class="org-future-risk-probability">${percentage}</strong>
-      <p>Chance of deterministic deterioration in the next ${esc(value.predictionHorizonMinutes)} minutes</p>
-      <footer><time datetime="${esc(value.cutoffAt)}">Data through ${esc(dateTime(value.cutoffAt))}</time>${simulatorNote}</footer>
+    const message = fixed?.state === "NOT_PREDICTED"
+      ? futureRiskReason(fixed.reasonCode)
+      : journey?.reason === "REMAINING_JOURNEY_DURATION_UNAVAILABLE"
+        ? "Remaining route duration is unavailable"
+        : "Prediction is not configured";
+    return `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="NOT_PREDICTED" aria-labelledby="org-future-risk-title">
+      <h3 id="org-future-risk-title">Future risk</h3><strong class="org-future-risk-unavailable">Forecast unavailable</strong><p>${esc(message)}</p>
     </article>`;
   }
 
+  function operationalDecisionCard(value) {
+    if (!value || typeof value.recommendedAction !== "string" || typeof value.reason !== "string") {
+      return `<article class="org-monitor-signal org-monitor-decision" data-operational-decision-state="UNAVAILABLE">
+        <h3>Recommended action</h3><strong class="org-future-risk-unavailable">Decision unavailable</strong>
+      </article>`;
+    }
+    return `<article class="org-monitor-signal org-monitor-decision" data-operational-decision-action="${esc(value.recommendedAction)}">
+      <h3>Recommended action</h3>
+      <strong>${esc(human(value.recommendedAction))}</strong>
+      <p>${esc(value.reason)}</p>
+      <footer>${esc(human(value.urgency || "routine"))} urgency · ${esc(forecastSource(value))}</footer>
+    </article>`;
+  }
+
+  function reroutingPanel(value, journeyContext) {
+    if (!value || typeof value.status !== "string") return "";
+    const candidate = value.recommendedCandidate;
+    if (candidate && typeof candidate.displayName === "string") {
+      const current = value.currentDestination;
+      const routeBased = value.routingEvidenceQuality === "ROUTE_DURATION"
+        && typeof candidate.etaMinutes === "number"
+        && current && typeof current.etaMinutes === "number";
+      const progress = journeyContext && typeof journeyContext.estimatedJourneyProgress === "number"
+        ? `${(journeyContext.estimatedJourneyProgress * 100).toFixed(0)}%`
+        : null;
+      const comparison = routeBased
+        ? `<div><dt>Current destination</dt><dd>${formatDuration(current.etaMinutes)}</dd></div><div><dt>Recommended facility</dt><dd>${esc(candidate.displayName)} · ${formatDuration(candidate.etaMinutes)}</dd></div><div><dt>Estimated time saved</dt><dd>${formatDuration(Math.max(0, current.etaMinutes - candidate.etaMinutes))}</dd></div>`
+        : `<div><dt>Recommended facility</dt><dd>${esc(candidate.displayName)}</dd></div><div><dt>Route evidence</dt><dd>Road ETA unavailable · ${typeof candidate.distanceKm === "number" ? `${candidate.distanceKm.toFixed(1)} km ` : ""}distance fallback</dd></div>`;
+      const capability = candidate.capabilityBasis
+        ? `<div><dt>Compatibility</dt><dd>Compatible with shipment profile</dd></div><div><dt>Evidence</dt><dd>Demo capability profile</dd></div>`
+        : `<div><dt>Compatibility</dt><dd>Not confirmed</dd></div>`;
+      return `<section class="org-rerouting-panel" data-rerouting-status="${esc(value.status)}"><header><div><span class="foundation-eyebrow">Destination decision</span><h3>${value.status === "REROUTE_RECOMMENDED" ? "Rerouting recommendation" : "Eligible alternative"}</h3></div><strong>${value.status === "REROUTE_RECOMMENDED" ? "REROUTE" : "AVAILABLE"}</strong></header><dl>${comparison}${progress ? `<div><dt>Estimated journey progress</dt><dd>${progress}</dd></div>` : ""}${capability}<div><dt>Why</dt><dd>${esc(value.reason || "A better eligible alternative is available.")}</dd></div></dl></section>`;
+    }
+    if (value.status === "INSUFFICIENT_ROUTE_DATA") {
+      return `<section class="org-rerouting-panel org-rerouting-empty"><h3>Rerouting unavailable</h3><p>No trustworthy route comparison is available.</p></section>`;
+    }
+    if (value.status === "NO_BETTER_ALTERNATIVE") {
+      const fallback = value.routingEvidenceQuality === "STRAIGHT_LINE_DISTANCE"
+        ? " Road ETA is unavailable; comparison used distance fallback only."
+        : "";
+      return `<section class="org-rerouting-panel org-rerouting-empty"><h3>No better eligible destination found</h3><p>The available route and compatibility evidence does not support rerouting.${fallback}</p></section>`;
+    }
+    return "";
+  }
+
+  function additionalForecast(value) {
+    if (!validFutureRiskPrediction(value)) return "";
+    return `<div class="org-additional-forecast"><span>Additional forecast</span><strong>${formatProbability(value.adverseEventProbability)} risk in next 30 min</strong><small>Compatibility forecast · not the journey-wide estimate</small></div>`;
+  }
+
+  function journeyDetail(value) {
+    if (!value) return "";
+    const progress = typeof value.estimatedJourneyProgress === "number" ? `${(value.estimatedJourneyProgress * 100).toFixed(0)}% estimated` : "Unavailable";
+    const remaining = typeof value.estimatedRemainingTravelMinutes === "number" ? formatDuration(value.estimatedRemainingTravelMinutes) : "Unavailable";
+    return `${monitoringDetail("Journey progress", progress)}${monitoringDetail("Remaining route", remaining)}`;
+  }
+
+  function riskCategory(value) {
+    return value && ["LOW", "MEDIUM", "HIGH"].includes(value.futureRiskCategory)
+      ? esc(value.futureRiskCategory)
+      : "";
+  }
+
+  function formatProbability(value) {
+    return typeof value === "number" && Number.isFinite(value) ? `${(value * 100).toFixed(0)}%` : "Unavailable";
+  }
+
+  function formatDuration(minutes) {
+    if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes < 0) return "Unavailable";
+    const rounded = Math.round(minutes);
+    if (rounded < 60) return `${rounded} min`;
+    const hours = Math.floor(rounded / 60);
+    const remainder = rounded % 60;
+    return remainder ? `${hours} h ${remainder} min` : `${hours} h`;
+  }
+
   function validFutureRiskPrediction(value) {
-    return typeof value.adverseEventProbability === "number"
+    return Boolean(value)
+      && value.state === "PREDICTED"
+      && typeof value.adverseEventProbability === "number"
       && Number.isFinite(value.adverseEventProbability)
       && value.adverseEventProbability >= 0
       && value.adverseEventProbability <= 1
@@ -144,6 +228,26 @@
       && typeof value.cutoffAt === "string"
       && value.cutoffAt.trim() !== ""
       && !Number.isNaN(new Date(value.cutoffAt).getTime());
+  }
+
+  function validJourneyRiskPrediction(value) {
+    return Boolean(value)
+      && value.available === true
+      && typeof value.probability === "number"
+      && Number.isFinite(value.probability)
+      && value.probability >= 0
+      && value.probability <= 1
+      && typeof value.horizonMinutes === "number"
+      && Number.isFinite(value.horizonMinutes)
+      && value.horizonMinutes > 0
+      && value.target === "DETERIORATION_BEFORE_DESTINATION"
+      && value.source === "JOURNEY_AWARE_MODEL";
+  }
+
+  function forecastSource(value) {
+    if (value.futureRiskSource === "JOURNEY_AWARE_MODEL") return "Journey-aware forecast";
+    if (value.futureRiskSource === "FIXED_30_MINUTE_FALLBACK") return "30-minute fallback";
+    return "No forecast";
   }
 
   function futureRiskReason(code) {
@@ -167,6 +271,18 @@
 
   function formatUtilization(value) {
     return typeof value === "number" ? `${(value * 100).toFixed(1)}%` : "Not applicable";
+  }
+
+  function telemetrySourceLabel(value) {
+    return ({ REAL_DEVICE: "Real device", SIMULATOR: "Simulator", MANUAL_TEST: "Manual test", REPLAY: "Replay" })[value] || "Unavailable";
+  }
+
+  function telemetryFreshness(value) {
+    if (!value || Number.isNaN(new Date(value).getTime())) return "No accepted reading";
+    const ageSeconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
+    if (ageSeconds <= 60) return `Current - ${Math.round(ageSeconds)} seconds ago`;
+    if (ageSeconds <= 300) return `Recent - ${Math.round(ageSeconds / 60)} minutes ago`;
+    return `Delayed - ${Math.round(ageSeconds / 60)} minutes ago`;
   }
 
   function productName(productId) {

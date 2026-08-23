@@ -126,10 +126,11 @@ async function main() {
       organizationState(shipment, status, status === "PLANNED" ? null : { status: "SAFE" }),
       "dashboard",
     );
-    assert.match(orgHtml, new RegExp(`V2 trip lifecycle[\\s\\S]*${status}`));
+    assert.match(orgHtml, new RegExp(`Trip lifecycle[\\s\\S]*${status}`));
     assert.match(orgHtml, /Delivery workflow/);
-    assert.match(orgHtml, /Current status/);
-    assert.match(orgHtml, /Deterministic ProductRules/);
+    assert.match(orgHtml, /Current condition/);
+    assert.match(orgHtml, /ProductRules/);
+    if (status === "COMPLETED") assert.match(orgHtml, /Trip completed/);
 
     const group = status === "PLANNED" ? "acceptedDeliveries" : status === "ACTIVE" ? "activeDeliveries" : "completedDeliveries";
     const page = status === "ACTIVE" ? "trip" : "deliveries";

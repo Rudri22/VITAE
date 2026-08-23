@@ -77,6 +77,7 @@ class V2SensorDataRouteTests(unittest.TestCase):
         )
         self.adapter = TelemetryHttpAdapter(service)
         self.patches = (
+            patch.object(app, "V2_DEVICE_INGEST_TOKEN", "test-device-token"),
             patch.object(app, "V2_TELEMETRY_HTTP_ADAPTER", self.adapter),
             patch.object(
                 app,
@@ -85,6 +86,13 @@ class V2SensorDataRouteTests(unittest.TestCase):
                     state_repository,
                     state_repository,
                     alert_repository,
+                    route_candidate_provider=(
+                        app.ApplicationFacilityRouteCandidateProvider(
+                            app.SHIPMENTS,
+                            app.FACILITIES,
+                            app.ORGANIZATIONS,
+                        )
+                    ),
                 ),
             ),
         )
@@ -186,7 +194,42 @@ class V2SensorDataRouteTests(unittest.TestCase):
         status, body = self.post_raw(b"not-json")
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "INVALID_JSON")
-        self.assertFalse(body["telemetryAccepted"])
+
+    def test_v2_device_ingestion_requires_dedicated_gateway_token(self):
+        status, body = self.post_path(
+            "/api/v2/sensor-data",
+            json.dumps({"sample_id": "unauthorized"}).encode("utf-8"),
+            device_token=None,
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(body["error"]["code"], "DEVICE_AUTHENTICATION_REQUIRED")
+        self.assertEqual(self.state_repository.get_telemetry_history("lot-trip-sim-001"), ())
+        self.assertNotIn("telemetryAccepted", body)
+
+    def test_real_device_telemetry_reaches_rules_and_monitoring_provenance(self):
+        status, accepted = self.post(
+            {
+                "sample_id": "real-device-safe",
+                "device_id": "device-sim-001",
+                "timestamp": "2026-08-19T18:00:00Z",
+                "temperature": 6.0,
+                "source": "REAL_DEVICE",
+            }
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(accepted["processingResult"]["decision"]["status"], "SAFE")
+        self.assertEqual(accepted["processingResult"]["telemetryRecord"]["source"], "REAL_DEVICE")
+
+        monitor_status, snapshot = self.get_path(
+            "/api/v2/monitor/live/lot-trip-sim-001"
+        )
+        self.assertEqual(monitor_status, 200)
+        self.assertEqual(snapshot["liveState"]["status"], "SAFE")
+        self.assertEqual(snapshot["telemetrySource"], "REAL_DEVICE")
+        encoded = json.dumps(snapshot)
+        self.assertNotIn("test-device-token", encoded)
+        self.assertNotIn("VITAE_DEVICE_INGEST_TOKEN", encoded)
+        self.assertNotIn("VITAE_GOOGLE_ROUTES_API_KEY", encoded)
 
     def test_monitoring_routes_share_ingestion_state_and_alerts(self):
         live_path = "/api/v2/monitor/live/lot-trip-sim-001"
@@ -204,6 +247,10 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.assertEqual(before["openAlertCount"], 0)
         self.assertIsNone(before["latestAlert"])
         self.assertEqual(before["futureRisk"], {"state": "NOT_CONFIGURED"})
+        self.assertEqual(
+            before["operationalDecision"]["rerouting"]["status"],
+            "NO_BETTER_ALTERNATIVE",
+        )
         self.assertEqual(alerts_status, 200)
         self.assertEqual(no_alerts["alerts"], [])
 
@@ -277,6 +324,7 @@ class V2SensorDataRouteTests(unittest.TestCase):
             self.assertEqual(status, 401)
             self.assertEqual(body, {"error": "Authentication required"})
             self.assertNotIn("futureRisk", body)
+            self.assertNotIn("operationalDecision", body)
         self.assertEqual(predictor.calls, [])
         self.assertEqual(
             self.state_repository.get_trip_by_lot_trip_id("lot-trip-sim-001"),
@@ -331,6 +379,7 @@ class V2SensorDataRouteTests(unittest.TestCase):
             self.assertEqual(status, 403)
             self.assertEqual(body["error"]["code"], "MONITOR_ACCESS_DENIED")
             self.assertNotIn("futureRisk", body)
+            self.assertNotIn("operationalDecision", body)
 
     def test_admin_and_support_dashboards_remain_available_but_monitor_is_forbidden(self):
         for token, dashboard in (
@@ -349,6 +398,7 @@ class V2SensorDataRouteTests(unittest.TestCase):
                     "MONITOR_ROLE_FORBIDDEN",
                 )
                 self.assertNotIn("futureRisk", monitor_body)
+                self.assertNotIn("operationalDecision", monitor_body)
                 self.assertEqual(dashboard_status, 200)
 
     def test_monitoring_routes_return_404_for_unknown_lot_trip(self):
@@ -407,8 +457,58 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.assertEqual(body["liveState"]["status"], "SAFE")
         self.assertEqual(body["futureRisk"]["state"], "PREDICTED")
         self.assertEqual(body["futureRisk"]["adverseEventProbability"], 0.17)
+        self.assertEqual(body["futureRisk30m"], body["futureRisk"])
+        self.assertEqual(body["journeyRisk"]["available"], False)
+        self.assertEqual(
+            body["journeyRisk"]["reason"],
+            "REMAINING_JOURNEY_DURATION_UNAVAILABLE",
+        )
         self.assertNotIn("riskPolicy", body["futureRisk"])
         self.assertNotIn("riskBand", body["futureRisk"])
+        self.assertEqual(body["operationalDecision"]["currentStatus"], "SAFE")
+        self.assertEqual(body["operationalDecision"]["futureRiskCategory"], "LOW")
+        self.assertEqual(
+            body["operationalDecision"]["futureRiskSource"],
+            "FIXED_30_MINUTE_FALLBACK",
+        )
+        self.assertEqual(body["operationalDecision"]["futureRiskHorizonMinutes"], 30)
+        self.assertEqual(body["operationalDecision"]["recommendedAction"], "CONTINUE")
+        self.assertEqual(
+            body["operationalDecision"]["rerouting"]["status"],
+            "INSUFFICIENT_ROUTE_DATA",
+        )
+
+    def test_monitoring_route_exposes_only_supported_journey_and_route_facts(self):
+        self.post(
+            {
+                "sample_id": "route-location",
+                "device_id": "device-sim-001",
+                "timestamp": "2026-08-19T18:00:00Z",
+                "temperature": 6.0,
+                "latitude": 33.88,
+                "longitude": 35.50,
+            }
+        )
+        status, body = self.get_path(
+            "/api/v2/monitor/live/lot-trip-sim-001"
+        )
+        self.assertEqual(status, 200)
+        decision = body["operationalDecision"]
+        journey = decision["journeyContext"]
+        self.assertEqual(
+            journey["currentCoordinates"],
+            {"latitude": 33.88, "longitude": 35.50},
+        )
+        self.assertEqual(journey["currentDestinationId"], "hospital-a")
+        self.assertIsNone(journey["remainingRouteMinutes"])
+        self.assertIsNone(journey["totalRouteMinutes"])
+        self.assertIsNone(journey["estimatedJourneyProgress"])
+        self.assertIsNone(journey["routeEvidenceSource"])
+        self.assertIsNone(journey["remainingViabilityMinutes"])
+        self.assertEqual(
+            decision["rerouting"]["status"], "NO_BETTER_ALTERNATIVE"
+        )
+        self.assertIsNone(decision["rerouting"]["recommendedCandidate"])
 
     def test_legacy_sensor_route_remains_admin_authenticated(self):
         status, body = self.post_path(
@@ -424,17 +524,20 @@ class V2SensorDataRouteTests(unittest.TestCase):
     def post_raw(self, body):
         return self.post_path("/api/v2/sensor-data", body)
 
-    def post_path(self, path, body):
+    def post_path(self, path, body, device_token="test-device-token"):
         connection = http.client.HTTPConnection(
             "127.0.0.1",
             self.server.server_port,
             timeout=2,
         )
+        headers = {"Content-Type": "application/json"}
+        if device_token is not None:
+            headers["Authorization"] = f"Bearer {device_token}"
         connection.request(
             "POST",
             path,
             body=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         response = connection.getresponse()
         payload = json.loads(response.read().decode("utf-8"))

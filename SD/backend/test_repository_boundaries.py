@@ -8,8 +8,17 @@ try:
         completed_trip_outcome,
         completed_trip_dataset,
         decision_outbox,
+        facility_capabilities,
+        journey_risk_examples,
+        journey_risk_inference,
+        journey_risk_training,
         monitoring_service,
+        operational_decision,
         operational_service,
+        pilot_validation,
+        real_device_gateway,
+        rerouting,
+        route_duration,
         repository_contract_suite,
         repository_serialization,
         shipment_access,
@@ -58,8 +67,17 @@ except ImportError:
     import completed_trip_outcome
     import completed_trip_dataset
     import decision_outbox
+    import facility_capabilities
+    import journey_risk_examples
+    import journey_risk_inference
+    import journey_risk_training
     import monitoring_service
+    import operational_decision
     import operational_service
+    import pilot_validation
+    import real_device_gateway
+    import rerouting
+    import route_duration
     import repository_contract_suite
     import repository_serialization
     import shipment_access
@@ -198,6 +216,15 @@ class RepositoryBoundaryTests(unittest.TestCase):
             temporal_risk_calibration,
             temporal_risk_inference,
             temporal_risk_model_comparison,
+            operational_decision,
+            rerouting,
+            facility_capabilities,
+            route_duration,
+            journey_risk_examples,
+            journey_risk_inference,
+            journey_risk_training,
+            pilot_validation,
+            real_device_gateway,
         ):
             source = inspect.getsource(module).lower()
             with self.subTest(module=module.__name__):

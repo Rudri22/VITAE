@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone
 import json
 import os
+import hmac
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -9,6 +10,10 @@ try:
     from .aws_shipment_service import ShipmentServiceError, get_live_shipments_for_user
     from .sensor_processor import process_sensor_data
     from .storage import (
+        FACILITIES,
+        FACILITY_CAPABILITY_PROFILES,
+        ORGANIZATIONS,
+        SHIPMENTS,
         add_aws_event,
         authenticate_user,
         create_admin_organization,
@@ -69,6 +74,10 @@ except ImportError:
     from aws_shipment_service import ShipmentServiceError, get_live_shipments_for_user
     from sensor_processor import process_sensor_data
     from storage import (
+        FACILITIES,
+        FACILITY_CAPABILITY_PROFILES,
+        ORGANIZATIONS,
+        SHIPMENTS,
         add_aws_event,
         authenticate_user,
         create_admin_organization,
@@ -138,6 +147,13 @@ try:
         LotTripNotFoundError,
         MonitoringService,
         serialize_future_risk,
+        serialize_journey_risk,
+    )
+    from .facility_capabilities import ApplicationFacilityCapabilityRegistry
+    from .operational_decision import (
+        OperationalDecisionConfig,
+        OperationalDecisionEngine,
+        operational_decision_document,
     )
     from .operational_service import OperationalTelemetryService
     from .product_catalog_service import ProductCatalogService
@@ -152,6 +168,12 @@ try:
         compose_repositories,
         shipment_access_resolver,
     )
+    from .rerouting import (
+        ApplicationFacilityRouteCandidateProvider,
+        ReroutingConfig,
+        ReroutingEvaluator,
+    )
+    from .route_duration import RouteDurationConfig, compose_route_duration_provider
     from .shipment_access import ShipmentAccess
     from .shipment_registration import V2ShipmentRegistrationService
     from .shipment_lifecycle import V2ShipmentLifecycleService
@@ -166,6 +188,10 @@ try:
         TemporalRiskInferenceConfig,
         compose_temporal_risk_inference,
     )
+    from .journey_risk_inference import (
+        JourneyRiskInferenceConfig,
+        compose_journey_risk_inference,
+    )
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
     from alert_lifecycle_service import (
@@ -179,6 +205,13 @@ except ImportError:
         LotTripNotFoundError,
         MonitoringService,
         serialize_future_risk,
+        serialize_journey_risk,
+    )
+    from facility_capabilities import ApplicationFacilityCapabilityRegistry
+    from operational_decision import (
+        OperationalDecisionConfig,
+        OperationalDecisionEngine,
+        operational_decision_document,
     )
     from operational_service import OperationalTelemetryService
     from product_catalog_service import ProductCatalogService
@@ -193,6 +226,12 @@ except ImportError:
         compose_repositories,
         shipment_access_resolver,
     )
+    from rerouting import (
+        ApplicationFacilityRouteCandidateProvider,
+        ReroutingConfig,
+        ReroutingEvaluator,
+    )
+    from route_duration import RouteDurationConfig, compose_route_duration_provider
     from shipment_access import ShipmentAccess
     from shipment_registration import V2ShipmentRegistrationService
     from shipment_lifecycle import V2ShipmentLifecycleService
@@ -207,10 +246,15 @@ except ImportError:
         TemporalRiskInferenceConfig,
         compose_temporal_risk_inference,
     )
+    from journey_risk_inference import (
+        JourneyRiskInferenceConfig,
+        compose_journey_risk_inference,
+    )
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
 
 HOST = "0.0.0.0"
+DEVICE_INGEST_TOKEN_ENV = "VITAE_DEVICE_INGEST_TOKEN"
 
 
 def _port_from_environment():
@@ -250,10 +294,25 @@ V2_PROTOTYPE_ASSIGNMENT = DeviceAssignment(
     active=True,
 )
 V2_REPOSITORY_CONFIG = RepositoryConfig.from_environment()
+V2_DEVICE_INGEST_TOKEN = os.environ.get(DEVICE_INGEST_TOKEN_ENV, "").strip() or None
 V2_REPOSITORIES = compose_repositories(V2_REPOSITORY_CONFIG)
 V2_TEMPORAL_RISK_CONFIG = TemporalRiskInferenceConfig.from_environment()
+V2_JOURNEY_RISK_CONFIG = JourneyRiskInferenceConfig.from_environment()
+V2_OPERATIONAL_DECISION_CONFIG = OperationalDecisionConfig.from_environment()
+V2_ROUTE_DURATION_CONFIG = RouteDurationConfig.from_environment()
+V2_REROUTING_CONFIG = ReroutingConfig.from_environment()
+V2_ROUTE_DURATION_PROVIDER = compose_route_duration_provider(
+    V2_ROUTE_DURATION_CONFIG
+)
+V2_FACILITY_CAPABILITY_REGISTRY = ApplicationFacilityCapabilityRegistry(
+    FACILITY_CAPABILITY_PROFILES
+)
 V2_TEMPORAL_RISK_SERVICE = compose_temporal_risk_inference(
     V2_TEMPORAL_RISK_CONFIG,
+    V2_REPOSITORIES,
+)
+V2_JOURNEY_RISK_SERVICE = compose_journey_risk_inference(
+    V2_JOURNEY_RISK_CONFIG,
     V2_REPOSITORIES,
 )
 V2_IDENTITY_REPOSITORY = V2_REPOSITORIES.identity_repository
@@ -287,6 +346,16 @@ V2_MONITORING_SERVICE = MonitoringService(
     V2_STATE_REPOSITORY,
     V2_ALERT_REPOSITORY,
     V2_TEMPORAL_RISK_SERVICE,
+    OperationalDecisionEngine(V2_OPERATIONAL_DECISION_CONFIG),
+    ApplicationFacilityRouteCandidateProvider(
+        SHIPMENTS,
+        FACILITIES,
+        ORGANIZATIONS,
+        capability_registry=V2_FACILITY_CAPABILITY_REGISTRY,
+        route_duration_provider=V2_ROUTE_DURATION_PROVIDER,
+    ),
+    ReroutingEvaluator(V2_REROUTING_CONFIG),
+    V2_JOURNEY_RISK_SERVICE,
 )
 V2_ALERT_LIFECYCLE_SERVICE = AlertLifecycleService(
     V2_ALERT_REPOSITORY,
@@ -692,7 +761,13 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "liveState": serialize_live_state(snapshot.live_state),
                 "openAlertCount": snapshot.open_alert_count,
                 "latestAlert": serialize_alert(snapshot.latest_alert),
+                "telemetrySource": snapshot.latest_telemetry_source,
                 "futureRisk": serialize_future_risk(snapshot.future_risk),
+                "futureRisk30m": serialize_future_risk(snapshot.future_risk),
+                "journeyRisk": serialize_journey_risk(snapshot.journey_risk),
+                "operationalDecision": operational_decision_document(
+                    snapshot.operational_decision
+                ),
             }
         )
 
@@ -952,6 +1027,8 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def handle_v2_sensor_data(self):
         """Translate HTTP JSON into the isolated operational telemetry pipeline."""
+        if not self.require_device_ingest_token():
+            return
         try:
             payload = self.read_json_body()
         except ValueError:
@@ -971,6 +1048,24 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         response = V2_TELEMETRY_HTTP_ADAPTER.handle_post(payload)
         self.send_json(response.body, status=response.status_code)
+
+    def require_device_ingest_token(self):
+        configured = V2_DEVICE_INGEST_TOKEN
+        if configured is None:
+            self.send_json(
+                {"success": False, "error": {"code": "DEVICE_INGEST_NOT_CONFIGURED", "message": "Device ingestion is not configured"}},
+                status=503,
+            )
+            return False
+        header = self.headers.get("Authorization", "")
+        supplied = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
+        if not supplied or not hmac.compare_digest(supplied, configured):
+            self.send_json(
+                {"success": False, "error": {"code": "DEVICE_AUTHENTICATION_REQUIRED", "message": "Valid device gateway authentication is required"}},
+                status=401,
+            )
+            return False
+        return True
 
     def handle_create_or_update_shipment(self):
         """Creates shipment records from real API data instead of hardcoded examples."""
