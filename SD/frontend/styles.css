@@ -4967,3 +4967,179 @@ a:focus-visible {
   .org-operational-strip article { border-right: 0; border-bottom: 1px solid var(--vitae-border); }
   .org-operational-strip article:last-child { border-bottom: 0; }
 }
+
+/* Professional interface refinement: one calm, shared operating system. */
+:root {
+  --vitae-bg: #f5f7f8;
+  --vitae-surface-soft: #f7f9fa;
+  --vitae-text: #18232d;
+  --vitae-muted: #60707c;
+  --vitae-border: #d9e0e5;
+  --vitae-radius: 8px;
+  --vitae-shadow: 0 1px 2px rgba(16, 47, 72, 0.05);
+}
+
+body { line-height: 1.45; }
+
+.vitae-shell { grid-template-columns: 224px minmax(0, 1fr); }
+.vitae-sidebar { gap: 22px; padding: 20px 14px 16px; }
+.vitae-sidebar nav { gap: 2px; }
+.vitae-sidebar nav button {
+  min-height: 40px;
+  padding: 0 11px;
+  border-radius: 6px;
+  font-size: .86rem;
+  transition: background-color .15s ease, color .15s ease;
+}
+.vitae-sidebar nav button:hover { background: #f2f5f6; }
+.vitae-sidebar nav button.active,
+.vitae-sidebar nav button[aria-current="page"] { background: #eaf2f2; box-shadow: inset 3px 0 var(--vitae-accent); }
+.vitae-user { padding: 12px 10px 0; }
+
+.vitae-workspace,
+.organization-foundation-shell .vitae-workspace,
+.support-resolution-app .vitae-workspace {
+  width: 100%;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 28px clamp(20px, 3vw, 42px) 44px;
+}
+.vitae-page-header,
+.driver-header { align-items: center; margin-bottom: 22px; }
+.vitae-page-header > div { min-width: 0; max-width: 760px; }
+.vitae-page-header h1,
+.driver-header h1 { font-size: clamp(1.45rem, 2vw, 1.85rem); }
+.vitae-page-header p { max-width: 68ch; margin-top: 4px; font-size: .84rem; }
+.vitae-page-content { gap: 16px; }
+
+.foundation-panel,
+.driver-section,
+.driver-current-card,
+.driver-profile-card { box-shadow: var(--vitae-shadow); }
+.foundation-panel { padding: 18px; }
+.foundation-panel > header,
+.driver-section > header { margin-bottom: 13px; }
+.foundation-panel h2,
+.driver-section h2 { font-size: .96rem; }
+.foundation-summary-item { min-height: 80px; padding: 14px 18px; }
+.foundation-summary-item strong { font-size: 1.35rem; }
+.foundation-empty { border-style: solid; background: #fafbfc; }
+
+.foundation-primary,
+.foundation-secondary,
+.driver-primary-action,
+.foundation-link,
+.org-row-actions button {
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.foundation-primary:hover,
+.driver-primary-action:hover { background: var(--vitae-brand-strong); }
+.foundation-secondary:hover,
+.org-row-actions button:hover { border-color: #aebac3; background: #f4f7f8; }
+.foundation-badge.elevated { background: #fff0e5; color: #a4430a; }
+
+.org-filters {
+  grid-template-columns: minmax(220px, 1.7fr) repeat(5, minmax(108px, 1fr));
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--vitae-border);
+}
+.org-table-head,
+.org-table-row { grid-template-columns: minmax(190px, 1.35fr) minmax(150px, 1fr) minmax(145px, .9fr) minmax(170px, 1fr) minmax(145px, .85fr); }
+.org-table-row { transition: background-color .15s ease; }
+.org-table-row:hover { background: #f7faf9; }
+
+.org-cockpit-metrics { box-shadow: var(--vitae-shadow); }
+.org-monitor-primary-grid {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--vitae-border);
+  border-radius: var(--vitae-radius);
+}
+.org-monitor-signal {
+  border: 0;
+  border-right: 1px solid var(--vitae-border);
+  border-radius: 0;
+}
+.org-monitor-signal:last-child { border-right: 0; }
+.org-monitor-current,
+.org-monitor-future,
+.org-monitor-journey,
+.org-monitor-decision { border-top: 3px solid var(--vitae-brand); }
+.org-monitor-future { border-top-color: var(--vitae-muted); }
+.org-monitor-journey { border-top-color: var(--vitae-accent); }
+
+.org-modal-backdrop { padding: 20px; background: rgba(18, 35, 47, .62); }
+.org-detail { width: min(960px, 100%); max-height: calc(100vh - 40px); padding: 0; border-radius: 8px; box-shadow: 0 18px 48px rgba(10, 28, 40, .22); }
+.org-detail > header { position: sticky; top: 0; z-index: 2; padding: 18px 20px; background: #fff; }
+.org-detail > header h2 { margin: 3px 0 8px; }
+.org-detail-primary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin: 0 20px; border-bottom: 1px solid var(--vitae-border); }
+.org-detail-primary > section { min-width: 0; padding: 20px 20px 20px 0; }
+.org-detail-primary > section + section { padding-right: 0; padding-left: 20px; border-left: 1px solid var(--vitae-border); }
+.org-detail-primary h3,
+.org-detail-disclosure h3 { margin: 0 0 12px; font-size: .88rem; }
+.org-detail-disclosure { margin: 0 20px; border-bottom: 1px solid var(--vitae-border); }
+.org-detail-disclosure > summary { padding: 15px 0; color: var(--vitae-brand-strong); font-size: .8rem; font-weight: 800; cursor: pointer; }
+.org-detail-disclosure > .org-detail-grid { margin: 0 0 18px; }
+.org-detail-disclosure .org-detail-grid > section { border-radius: 7px; box-shadow: none; }
+.org-detail > .org-verification,
+.org-detail > .org-final-report { margin: 18px 20px 20px; }
+
+@media (max-width: 1100px) {
+  .org-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .org-filters > :first-child { grid-column: span 2; }
+}
+
+@media (max-width: 820px) {
+  .vitae-shell { display: block; }
+  .vitae-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    height: auto;
+    gap: 10px;
+    padding: 10px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--vitae-border);
+  }
+  .vitae-sidebar .vitae-brand-mark { width: 32px; height: 32px; }
+  .vitae-sidebar .vitae-brand div > span { display: none; }
+  .vitae-sidebar nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+  .vitae-sidebar nav button { min-width: max-content; min-height: 36px; padding: 0 10px; text-align: center; }
+  .vitae-sidebar nav button.active,
+  .vitae-sidebar nav button[aria-current="page"] { box-shadow: inset 0 -3px var(--vitae-accent); }
+  .vitae-workspace,
+  .organization-foundation-shell .vitae-workspace,
+  .support-resolution-app .vitae-workspace { padding: 18px 14px 32px; }
+  .vitae-page-header { align-items: flex-start; gap: 14px; margin-bottom: 18px; }
+  .vitae-page-header > .foundation-primary { min-width: max-content; }
+  .foundation-summary-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .foundation-summary-item { border-bottom: 1px solid var(--vitae-border); }
+  .foundation-summary-item:nth-child(2n) { border-right: 0; }
+  .foundation-summary-item:nth-last-child(-n+2) { border-bottom: 0; }
+  .org-monitor-primary-grid { grid-template-columns: 1fr; }
+  .org-monitor-signal { min-height: 0; border-right: 0; border-bottom: 1px solid var(--vitae-border); }
+  .org-monitor-signal:last-child { border-bottom: 0; }
+  .org-detail-primary { grid-template-columns: 1fr; }
+  .org-detail-primary > section { padding: 16px 0; }
+  .org-detail-primary > section + section { padding-left: 0; border-top: 1px solid var(--vitae-border); border-left: 0; }
+}
+
+@media (max-width: 560px) {
+  .vitae-sidebar { position: static; }
+  .vitae-page-header { display: grid; }
+  .vitae-page-header > .foundation-primary { width: 100%; }
+  .foundation-panel { padding: 15px; }
+  .org-filters { grid-template-columns: 1fr 1fr; }
+  .org-filters > :first-child { grid-column: 1 / -1; }
+  .org-modal-backdrop { align-items: end; padding: 0; }
+  .org-detail { width: 100%; max-height: 96vh; border-radius: 8px 8px 0 0; }
+  .org-detail > header { padding: 15px; }
+  .org-detail > header .org-row-actions .foundation-primary { display: none; }
+  .org-table-row > span:nth-child(2),
+  .org-table-row > span:nth-child(3),
+  .org-table-row > span:nth-child(5) { display: none; }
+  .org-detail-primary,
+  .org-detail-disclosure { margin-right: 15px; margin-left: 15px; }
+  .org-detail-disclosure > .org-detail-grid { grid-template-columns: 1fr; }
+}

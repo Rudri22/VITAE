@@ -11,9 +11,11 @@
     const normalized = String(tone || value || "neutral").toLowerCase();
     const safeTone = ["safe", "healthy", "delivered", "resolved", "online", "low"].includes(normalized)
       ? "safe"
-      : ["warning", "medium", "high", "in_progress", "waiting_for_response", "low_battery", "delayed", "offline", "at_risk"].includes(normalized)
+      : ["warning", "monitor", "medium", "in_progress", "waiting_for_response", "low_battery", "delayed", "offline"].includes(normalized)
         ? "warning"
-        : normalized === "critical" ? "critical" : "neutral";
+        : ["high", "at_risk"].includes(normalized)
+          ? "elevated"
+          : ["critical", "rule_violation"].includes(normalized) ? "critical" : "neutral";
     return `<span class="foundation-badge ${safeTone}">${escape(humanize(value))}</span>`;
   }
 
@@ -30,7 +32,7 @@
       <div class="vitae-shell ${escape(roleClass)} ${mobile ? "mobile-role-shell" : ""}">
         <aside class="vitae-sidebar">
           <div class="vitae-brand"><span class="vitae-brand-mark" aria-hidden="true">V</span><div><strong>VITAE</strong><span>${escape(roleLabel)}</span></div></div>
-          <nav aria-label="${escape(roleLabel)} navigation">${nav.map(([id, label]) => `<button class="${id === active ? "active" : ""}" data-role-page="${escape(id)}" type="button">${escape(label)}</button>`).join("")}</nav>
+          <nav aria-label="${escape(roleLabel)} navigation">${nav.map(([id, label]) => `<button class="${id === active ? "active" : ""}" ${id === active ? 'aria-current="page"' : ""} data-role-page="${escape(id)}" type="button">${escape(label)}</button>`).join("")}</nav>
           <div class="vitae-user"><span>${escape(user.name || user.username)}</span><small>${escape(roleLabel)}</small><button data-logout type="button">Log out</button></div>
         </aside>
         <section class="vitae-workspace">
