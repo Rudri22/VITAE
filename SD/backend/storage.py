@@ -814,8 +814,11 @@ def get_user_profile(user):
     return profile
 
 
-def get_admin_foundation_dashboard_data():
-    shipments = [admin_shipment_record(shipment) for shipment in SHIPMENTS.values()]
+def get_admin_foundation_dashboard_data(telemetry_state_repository=None):
+    shipments = [
+        admin_shipment_record(shipment, telemetry_state_repository)
+        for shipment in SHIPMENTS.values()
+    ]
     sensors = [admin_sensor_record(sensor) for sensor in SENSORS.values()]
     tickets = [admin_ticket_record(ticket) for ticket in SUPPORT_TICKETS.values()]
     organizations = [admin_organization_record(organization) for organization in ORGANIZATIONS.values()]
@@ -893,11 +896,15 @@ def get_organization_foundation_dashboard_data(
     }
 
 
-def get_driver_dashboard_data(driver_id):
+def get_driver_dashboard_data(driver_id, telemetry_state_repository=None):
     driver = DRIVERS.get(driver_id)
     if not driver:
         return {"scope": "driver", "driver": None, "activeDelivery": None, "nextDelivery": None, "assignedDeliveries": [], "deliveryRequests": [], "acceptedDeliveries": [], "upcomingDeliveries": [], "activeDeliveries": [], "completedDeliveries": [], "alerts": [], "tickets": [], "incidents": []}
-    shipments = [driver_shipment_record(item) for item in SHIPMENTS.values() if item.get("driverId") == driver_id]
+    shipments = [
+        driver_shipment_record(item, telemetry_state_repository)
+        for item in SHIPMENTS.values()
+        if item.get("driverId") == driver_id
+    ]
     requests = [item for item in shipments if item.get("status") in DRIVER_REQUEST_STATUSES]
     accepted = [item for item in shipments if item.get("status") in DRIVER_ACCEPTED_STATUSES]
     active = [item for item in shipments if item.get("status") in DRIVER_ACTIVE_STATUSES]
@@ -922,7 +929,7 @@ def get_driver_dashboard_data(driver_id):
     }
 
 
-def get_support_foundation_dashboard_data(user_id):
+def get_support_foundation_dashboard_data(user_id, telemetry_state_repository=None):
     tickets = [support_ticket_record(item) for item in SUPPORT_TICKETS.values()]
     assigned = [item for item in tickets if item.get("assignedTo") == user_id and item.get("status") != "resolved"]
     resolved = [item for item in tickets if item.get("status") == "resolved"]
@@ -934,7 +941,7 @@ def get_support_foundation_dashboard_data(user_id):
         [item for item in tickets if item.get("status") != "resolved"],
         key=lambda item: ({"critical": 0, "high": 1, "medium": 2, "low": 3}.get(item.get("priority"), 4), item.get("updatedAt") or ""),
     )
-    shipments = get_support_shipment_records()
+    shipments = get_support_shipment_records(telemetry_state_repository)
     active_trips = [item for item in shipments if item.get("status") in {"active", "in_transit", "at_risk", "delayed"}]
     active_trips.sort(key=lambda item: (0 if item.get("status") in {"at_risk", "delayed"} else 1, item.get("lastUpdated") or ""))
     return {
@@ -2072,8 +2079,8 @@ def admin_user_record(token, user):
     }
 
 
-def admin_shipment_record(shipment):
-    record = shipment_monitor_record(shipment)
+def admin_shipment_record(shipment, telemetry_state_repository=None):
+    record = shipment_monitor_record(shipment, telemetry_state_repository)
     organization_id = shipment.get("organizationId") or shipment.get("destinationHospitalId")
     driver = DRIVERS.get(shipment.get("driverId")) or {}
     record.update({
@@ -2865,8 +2872,8 @@ DRIVER_INCIDENT_CATEGORIES = {"vehicle_problem", "cooling_failure", "sensor_prob
 DRIVER_ALERT_ACTIONS = {"action_completed", "problem_continues", "contact_organization", "sensor_issue"}
 
 
-def driver_shipment_record(shipment):
-    monitor = shipment_monitor_record(shipment)
+def driver_shipment_record(shipment, telemetry_state_repository=None):
+    monitor = shipment_monitor_record(shipment, telemetry_state_repository)
     organization = ORGANIZATIONS.get(shipment.get("organizationId")) or {}
     return {
         "shipmentId": shipment.get("shipmentId"),
@@ -2914,8 +2921,11 @@ def _driver_shipment(driver_id, shipment_id):
     return shipment
 
 
-def get_driver_delivery(driver_id, shipment_id):
-    return driver_shipment_record(_driver_shipment(driver_id, shipment_id))
+def get_driver_delivery(driver_id, shipment_id, telemetry_state_repository=None):
+    return driver_shipment_record(
+        _driver_shipment(driver_id, shipment_id),
+        telemetry_state_repository,
+    )
 
 
 def get_driver_alerts(driver_id):
@@ -3196,11 +3206,11 @@ def support_ticket_record(ticket):
     return record
 
 
-def support_shipment_context(shipment_id):
+def support_shipment_context(shipment_id, telemetry_state_repository=None):
     shipment = SHIPMENTS.get(shipment_id)
     if not shipment:
         return None
-    monitor = shipment_monitor_record(shipment)
+    monitor = shipment_monitor_record(shipment, telemetry_state_repository)
     alerts = [deepcopy(item) for item in ORGANIZATION_ALERTS.values() if item.get("shipmentId") == shipment_id]
     return {
         "shipmentId": shipment_id, "organizationId": shipment.get("organizationId"), "organizationName": organization_name(shipment.get("organizationId")),
@@ -3212,8 +3222,17 @@ def support_shipment_context(shipment_id):
     }
 
 
-def get_support_shipment_records():
-    return [context for context in [support_shipment_context(item.get("shipmentId")) for item in SHIPMENTS.values()] if context]
+def get_support_shipment_records(telemetry_state_repository=None):
+    return [
+        context
+        for context in [
+            support_shipment_context(
+                item.get("shipmentId"), telemetry_state_repository
+            )
+            for item in SHIPMENTS.values()
+        ]
+        if context
+    ]
 
 
 def get_support_organization_records():

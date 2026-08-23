@@ -609,14 +609,20 @@ class ApiHandler(BaseHTTPRequestHandler):
             user = self.require_admin_user()
             if not user:
                 return
-            self.send_json(get_admin_foundation_dashboard_data())
+            self.send_json(
+                get_admin_foundation_dashboard_data(V2_STATE_REPOSITORY)
+            )
             return
 
         if path == "/api/support/dashboard":
             user = self.require_support_user()
             if not user:
                 return
-            self.send_json(get_support_foundation_dashboard_data(user.get("userId")))
+            self.send_json(
+                get_support_foundation_dashboard_data(
+                    user.get("userId"), V2_STATE_REPOSITORY
+                )
+            )
             return
 
         if path.startswith("/api/support/tickets/"):
@@ -699,7 +705,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             user = self.require_driver_user()
             if not user:
                 return
-            self.send_json(get_driver_dashboard_data(user.get("driverId")))
+            self.send_json(
+                get_driver_dashboard_data(
+                    user.get("driverId"), V2_STATE_REPOSITORY
+                )
+            )
             return
 
         if path == "/api/driver/support":
@@ -714,7 +724,15 @@ class ApiHandler(BaseHTTPRequestHandler):
             if not user:
                 return
             try:
-                self.send_json({"delivery": get_driver_delivery(user.get("driverId"), path.split("/")[-1])})
+                self.send_json(
+                    {
+                        "delivery": get_driver_delivery(
+                            user.get("driverId"),
+                            path.split("/")[-1],
+                            V2_STATE_REPOSITORY,
+                        )
+                    }
+                )
             except KeyError as error:
                 self.send_json({"error": str(error).strip("'")}, status=404)
             return
@@ -731,7 +749,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             if not user:
                 return
             try:
-                self.send_json(get_live_shipments_for_user(user))
+                self.send_json(
+                    get_live_shipments_for_user(user, V2_STATE_REPOSITORY)
+                )
             except ShipmentServiceError as error:
                 self.send_json({"error": str(error)}, status=503)
             return

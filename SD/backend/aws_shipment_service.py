@@ -19,7 +19,7 @@ class ShipmentServiceError(RuntimeError):
     pass
 
 
-def get_live_shipments_for_user(user):
+def get_live_shipments_for_user(user, telemetry_state_repository=None):
     """Read live shipment rows from DynamoDB and scope them by role."""
     role = (user or {}).get("role")
     organization_id = (user or {}).get("organizationId")
@@ -30,7 +30,7 @@ def get_live_shipments_for_user(user):
 
     records = read_shipments_from_dynamodb()
     if records is None:
-        records = read_local_shipments()
+        records = read_local_shipments(telemetry_state_repository)
 
     live_records = [normalize_live_shipment(record) for record in records]
     active_records = [
@@ -74,8 +74,14 @@ def has_aws_config():
     return bool(os.environ.get("AWS_REGION") and os.environ.get("SHIPMENTS_TABLE"))
 
 
-def read_local_shipments():
-    return [shipment_monitor_record(deepcopy(shipment)) for shipment in SHIPMENTS.values()]
+def read_local_shipments(telemetry_state_repository=None):
+    return [
+        shipment_monitor_record(
+            deepcopy(shipment),
+            telemetry_state_repository,
+        )
+        for shipment in SHIPMENTS.values()
+    ]
 
 
 def normalize_live_shipment(record):

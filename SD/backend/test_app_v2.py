@@ -348,6 +348,74 @@ class V2SensorDataRouteTests(unittest.TestCase):
                     ],
                 )
 
+        live_status, live = self.get_path("/api/shipments/live")
+        self.assertEqual(live_status, 200)
+        live_item = next(
+            item for item in live["shipments"]
+            if item["shipmentId"] == "ship-a-v2-001"
+        )
+        self.assertEqual(live_item["temperature"], 6.0)
+        self.assertEqual(live_item["batteryLevel"], 84.0)
+        self.assertEqual(live_item["lastUpdated"], "2026-08-19T18:00:00+00:00")
+
+        role_reads = (
+            ("/api/admin/dashboard", "admin-token", lambda body: body["shipments"]),
+            ("/api/support/dashboard", "support-token", lambda body: body["shipments"]),
+            (
+                "/api/driver/dashboard",
+                "driver-token",
+                lambda body: body["activeDeliveries"],
+            ),
+            (
+                "/api/driver/shipments/ship-a-v2-001",
+                "driver-token",
+                lambda body: [body["delivery"]],
+            ),
+        )
+        for path, token, records in role_reads:
+            with self.subTest(role_path=path):
+                status, body = self.get_path(path, token=token)
+                self.assertEqual(status, 200)
+                item = next(
+                    record for record in records(body)
+                    if record["shipmentId"] == "ship-a-v2-001"
+                )
+                self.assertEqual(item["temperature"], 6.0)
+                self.assertEqual(item["batteryLevel"], 84.0)
+                self.assertEqual(
+                    item["lastUpdated"], "2026-08-19T18:00:00+00:00"
+                )
+
+        legacy_id = "legacy-projection-control"
+        app.SHIPMENTS[legacy_id] = {
+            "shipmentId": legacy_id,
+            "organizationId": "hospital-a",
+            "destinationHospitalId": "hospital-a",
+            "driverId": "driver-aya",
+            "status": "in_transit",
+            "temperature": 4.5,
+            "batteryLevel": 76.0,
+            "lastUpdated": "2026-08-19T19:00:00Z",
+            "latestReading": {
+                "temperature": 4.5,
+                "batteryLevel": 76.0,
+                "timestamp": "2026-08-19T19:00:00Z",
+            },
+        }
+        try:
+            for path, token, records in role_reads[:-1]:
+                with self.subTest(legacy_role_path=path):
+                    status, body = self.get_path(path, token=token)
+                    self.assertEqual(status, 200)
+                    item = next(
+                        record for record in records(body)
+                        if record["shipmentId"] == legacy_id
+                    )
+                    self.assertEqual(item["temperature"], 4.5)
+                    self.assertEqual(item["batteryLevel"], 76.0)
+        finally:
+            app.SHIPMENTS.pop(legacy_id, None)
+
     def test_health_check_is_public_and_does_not_mutate_v2_state(self):
         assignments_before = self.state_repository.get_device_assignments(
             "device-sim-001"

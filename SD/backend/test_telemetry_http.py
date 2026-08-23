@@ -1,6 +1,7 @@
 import ast
 import json
 import unittest
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -16,9 +17,10 @@ try:
         StateIntegrityError,
     )
     from .telemetry import TelemetryValidationError
-    from .telemetry_http import TelemetryHttpAdapter
+    from .telemetry_http import TelemetryHttpAdapter, serialize_trip_identity
     from .trip_identity import (
         NoActiveAssignmentError,
+        TripStatus,
         TripNotActiveError,
         UnknownDeviceError,
     )
@@ -34,9 +36,10 @@ except ImportError:
         StateIntegrityError,
     )
     from telemetry import TelemetryValidationError
-    from telemetry_http import TelemetryHttpAdapter
+    from telemetry_http import TelemetryHttpAdapter, serialize_trip_identity
     from trip_identity import (
         NoActiveAssignmentError,
+        TripStatus,
         TripNotActiveError,
         UnknownDeviceError,
     )
@@ -76,6 +79,22 @@ class TelemetryHttpAdapterTests(unittest.TestCase):
             self.alert_repository,
         )
         self.adapter = TelemetryHttpAdapter(self.service)
+
+    def test_trip_identity_serialization_exposes_authoritative_completion_time(self):
+        trip = self.environment.repository.get_trip_by_id("sim-vitae-trip-001")
+        active = serialize_trip_identity(trip)
+        self.assertIsNone(active["completedAt"])
+
+        completed_at = self.environment.start_time + timedelta(hours=1)
+        completed = replace(
+            trip,
+            status=TripStatus.COMPLETED,
+            completed_at=completed_at,
+        )
+        self.assertEqual(
+            serialize_trip_identity(completed)["completedAt"],
+            completed_at.isoformat().replace("+00:00", "Z"),
+        )
 
     def test_safe_success_response_is_json_safe_and_camel_case(self):
         response = self.adapter.handle_post(raw_sample(self.environment))

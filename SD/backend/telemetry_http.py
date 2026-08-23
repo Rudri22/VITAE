@@ -277,6 +277,7 @@ def serialize_trip_identity(trip: TripIdentity):
         "destination": trip.destination,
         "startTime": _iso_timestamp(trip.start_time),
         "status": trip.status.value,
+        "completedAt": _iso_timestamp(trip.completed_at),
     }
 
 
