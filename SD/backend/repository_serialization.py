@@ -12,22 +12,9 @@ try:
         validate_alert_outbox_event,
         validate_status_decision_record,
     )
-    from .completed_trip_dataset import (
-        CompletedTripDatasetError,
-        CompletedTripDatasetRecord,
-        validate_completed_trip_dataset_record,
-    )
     from .risk_rules import ApplicationStatus
     from .state_repository import LiveState, TelemetryRecord
     from .telemetry import TelemetrySource
-    from .shipment_access import ShipmentAccess
-    from .temporal_risk_examples import (
-        TemporalRiskExample,
-        TemporalRiskExampleError,
-        TemporalRiskFeatures,
-        TemporalRiskLabel,
-        validate_temporal_risk_example,
-    )
     from .trip_identity import (
         DeviceAssignment,
         TripIdentity,
@@ -44,22 +31,9 @@ except ImportError:
         validate_alert_outbox_event,
         validate_status_decision_record,
     )
-    from completed_trip_dataset import (
-        CompletedTripDatasetError,
-        CompletedTripDatasetRecord,
-        validate_completed_trip_dataset_record,
-    )
     from risk_rules import ApplicationStatus
     from state_repository import LiveState, TelemetryRecord
     from telemetry import TelemetrySource
-    from shipment_access import ShipmentAccess
-    from temporal_risk_examples import (
-        TemporalRiskExample,
-        TemporalRiskExampleError,
-        TemporalRiskFeatures,
-        TemporalRiskLabel,
-        validate_temporal_risk_example,
-    )
     from trip_identity import (
         DeviceAssignment,
         TripIdentity,
@@ -70,9 +44,15 @@ except ImportError:
 
 if TYPE_CHECKING:
     try:
+        from .completed_trip_dataset import CompletedTripDatasetRecord
         from .completed_trip_outcome import CompletedTripOutcome
+        from .shipment_access import ShipmentAccess
+        from .temporal_risk_examples import TemporalRiskExample
     except ImportError:
+        from completed_trip_dataset import CompletedTripDatasetRecord
         from completed_trip_outcome import CompletedTripOutcome
+        from shipment_access import ShipmentAccess
+        from temporal_risk_examples import TemporalRiskExample
 
 
 SCHEMA_VERSION = 1
@@ -174,7 +154,7 @@ def deserialize_device_assignment(payload: Mapping[str, Any]) -> DeviceAssignmen
     )
 
 
-def serialize_shipment_access(value: ShipmentAccess) -> dict[str, Any]:
+def serialize_shipment_access(value: "ShipmentAccess") -> dict[str, Any]:
     return _document(
         "vitae.shipment_access",
         {
@@ -186,7 +166,12 @@ def serialize_shipment_access(value: ShipmentAccess) -> dict[str, Any]:
     )
 
 
-def deserialize_shipment_access(payload: Mapping[str, Any]) -> ShipmentAccess:
+def deserialize_shipment_access(payload: Mapping[str, Any]) -> "ShipmentAccess":
+    try:
+        from .shipment_access import ShipmentAccess
+    except ImportError:
+        from shipment_access import ShipmentAccess
+
     fields = _fields(payload, "vitae.shipment_access", _SHIPMENT_ACCESS_FIELDS)
     return ShipmentAccess(
         shipment_id=_text(fields, "shipment_id"),
@@ -738,8 +723,19 @@ def deserialize_completed_trip_outcome(
 
 
 def serialize_completed_trip_dataset_record(
-    value: CompletedTripDatasetRecord,
+    value: "CompletedTripDatasetRecord",
 ) -> dict[str, Any]:
+    try:
+        from .completed_trip_dataset import (
+            CompletedTripDatasetError,
+            validate_completed_trip_dataset_record,
+        )
+    except ImportError:
+        from completed_trip_dataset import (
+            CompletedTripDatasetError,
+            validate_completed_trip_dataset_record,
+        )
+
     try:
         validate_completed_trip_dataset_record(value)
     except CompletedTripDatasetError as error:
@@ -763,7 +759,20 @@ def serialize_completed_trip_dataset_record(
 
 def deserialize_completed_trip_dataset_record(
     payload: Mapping[str, Any],
-) -> CompletedTripDatasetRecord:
+) -> "CompletedTripDatasetRecord":
+    try:
+        from .completed_trip_dataset import (
+            CompletedTripDatasetError,
+            CompletedTripDatasetRecord,
+            validate_completed_trip_dataset_record,
+        )
+    except ImportError:
+        from completed_trip_dataset import (
+            CompletedTripDatasetError,
+            CompletedTripDatasetRecord,
+            validate_completed_trip_dataset_record,
+        )
+
     fields = _fields(
         payload,
         "vitae.completed_trip_dataset_record",
@@ -793,8 +802,19 @@ def deserialize_completed_trip_dataset_record(
 
 
 def serialize_temporal_risk_example(
-    value: TemporalRiskExample,
+    value: "TemporalRiskExample",
 ) -> dict[str, Any]:
+    try:
+        from .temporal_risk_examples import (
+            TemporalRiskExampleError,
+            validate_temporal_risk_example,
+        )
+    except ImportError:
+        from temporal_risk_examples import (
+            TemporalRiskExampleError,
+            validate_temporal_risk_example,
+        )
+
     try:
         validate_temporal_risk_example(value)
     except TemporalRiskExampleError as error:
@@ -848,7 +868,24 @@ def serialize_temporal_risk_example(
 
 def deserialize_temporal_risk_example(
     payload: Mapping[str, Any],
-) -> TemporalRiskExample:
+) -> "TemporalRiskExample":
+    try:
+        from .temporal_risk_examples import (
+            TemporalRiskExample,
+            TemporalRiskExampleError,
+            TemporalRiskFeatures,
+            TemporalRiskLabel,
+            validate_temporal_risk_example,
+        )
+    except ImportError:
+        from temporal_risk_examples import (
+            TemporalRiskExample,
+            TemporalRiskExampleError,
+            TemporalRiskFeatures,
+            TemporalRiskLabel,
+            validate_temporal_risk_example,
+        )
+
     fields = _fields(
         payload,
         "vitae.temporal_risk_example",
