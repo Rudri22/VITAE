@@ -576,11 +576,19 @@ DRIVERS = {
 DRIVERS = {"driver-aya": DRIVERS["driver-aya"]}
 DRIVERS["driver-aya"]["status"] = "available"
 
+FACILITY_CAPABILITY_PROFILES = {
+    "demo-product-receiving-v1": {
+        "profileId": "demo-product-receiving-v1",
+        "supportedProductIds": ["gardasil-9"],
+        "evidenceKind": "ENGINEERING_DEMO_METADATA",
+    },
+}
+
 FACILITIES = {
     "facility-a-central": {"facilityId": "facility-a-central", "organizationId": "hospital-a", "name": "Central Cold Storage", "type": "warehouse", "gps": {"lat": 33.8797, "lng": 35.5018}},
-    "facility-a-receiving": {"facilityId": "facility-a-receiving", "organizationId": "hospital-a", "name": "Hospital A Receiving", "type": "receiving", "gps": {"lat": 33.8938, "lng": 35.5018}},
+    "facility-a-receiving": {"facilityId": "facility-a-receiving", "organizationId": "hospital-a", "name": "Hospital A Receiving", "type": "receiving", "gps": {"lat": 33.8938, "lng": 35.5018}, "capabilityProfileId": "demo-product-receiving-v1"},
     "facility-b-hub": {"facilityId": "facility-b-hub", "organizationId": "hospital-b", "name": "Regional Supply Hub", "type": "warehouse", "gps": {"lat": 33.8332, "lng": 35.5466}},
-    "facility-b-receiving": {"facilityId": "facility-b-receiving", "organizationId": "hospital-b", "name": "Hospital B Receiving", "type": "receiving", "gps": {"lat": 33.8710, "lng": 35.5300}},
+    "facility-b-receiving": {"facilityId": "facility-b-receiving", "organizationId": "hospital-b", "name": "Hospital B Receiving", "type": "receiving", "gps": {"lat": 33.8710, "lng": 35.5300}, "capabilityProfileId": "demo-product-receiving-v1"},
     "facility-north": {"facilityId": "facility-north", "organizationId": "warehouse-north", "name": "NorthLine Main Facility", "type": "warehouse", "gps": {"lat": 34.122, "lng": 35.651}},
 }
 
