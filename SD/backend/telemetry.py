@@ -1,7 +1,18 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from math import isfinite
 from typing import Any, Mapping, Optional, Tuple
+
+
+class TelemetrySource(str, Enum):
+    SIMULATOR = "SIMULATOR"
+    REAL_DEVICE = "REAL_DEVICE"
+    MANUAL_TEST = "MANUAL_TEST"
+    REPLAY = "REPLAY"
+
+
+MAX_FUTURE_TIMESTAMP_SKEW = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)
@@ -14,6 +25,7 @@ class ValidatedTelemetrySample:
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     device_health: Optional[str] = None
+    source: TelemetrySource = TelemetrySource.MANUAL_TEST
 
 
 class TelemetryValidationError(ValueError):
@@ -25,6 +37,8 @@ class TelemetryValidationError(ValueError):
 
 def validate_and_normalize_telemetry(
     raw_sample: Mapping[str, Any],
+    *,
+    received_at: Optional[datetime] = None,
 ) -> ValidatedTelemetrySample:
     """Validate raw sensor facts and return one immutable normalized sample."""
     if not isinstance(raw_sample, Mapping):
@@ -36,10 +50,18 @@ def validate_and_normalize_telemetry(
     sample_id = _required_identifier(raw_sample, "sample_id")
     device_id = _required_identifier(raw_sample, "device_id")
     timestamp = _required_timestamp(raw_sample)
+    observed_at = datetime.now(timezone.utc) if received_at is None else _aware_received_at(received_at)
+    if timestamp > observed_at + MAX_FUTURE_TIMESTAMP_SKEW:
+        raise TelemetryValidationError(
+            "TIMESTAMP_TOO_FAR_IN_FUTURE",
+            "Telemetry timestamp is too far in the future",
+            "timestamp",
+        )
     temperature = _required_number(raw_sample, "temperature")
     battery_level = _optional_battery(raw_sample)
     latitude, longitude = _optional_gps(raw_sample)
     device_health = _optional_device_health(raw_sample)
+    source = _telemetry_source(raw_sample)
 
     return ValidatedTelemetrySample(
         sample_id=sample_id,
@@ -50,6 +72,7 @@ def validate_and_normalize_telemetry(
         latitude=latitude,
         longitude=longitude,
         device_health=device_health,
+        source=source,
     )
 
 
@@ -185,6 +208,24 @@ def _optional_device_health(raw_sample):
             "device_health",
         )
     return value.strip()
+
+
+def _telemetry_source(raw_sample):
+    raw = raw_sample.get("source", TelemetrySource.MANUAL_TEST.value)
+    try:
+        return TelemetrySource(str(raw).strip().upper())
+    except ValueError as error:
+        raise TelemetryValidationError(
+            "INVALID_TELEMETRY_SOURCE",
+            "Telemetry source must be SIMULATOR, REAL_DEVICE, MANUAL_TEST, or REPLAY",
+            "source",
+        ) from error
+
+
+def _aware_received_at(value):
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("received_at must be a timezone-aware datetime")
+    return value.astimezone(timezone.utc)
 
 
 def _is_finite_number(value):

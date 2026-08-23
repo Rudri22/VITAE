@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 try:
     from .telemetry import (
         TelemetryValidationError,
+        TelemetrySource,
         ValidatedTelemetrySample,
         is_newer_sample,
         sample_identity,
@@ -12,6 +13,7 @@ try:
 except ImportError:
     from telemetry import (
         TelemetryValidationError,
+        TelemetrySource,
         ValidatedTelemetrySample,
         is_newer_sample,
         sample_identity,
@@ -48,6 +50,18 @@ class TelemetryValidationTests(unittest.TestCase):
         self.assertEqual(sample.temperature, 5.0)
         self.assertIsNone(sample.battery_level)
         self.assertIsNone(sample.latitude)
+        self.assertEqual(sample.source, TelemetrySource.MANUAL_TEST)
+
+    def test_real_device_and_simulator_provenance_are_validated(self):
+        self.assertEqual(
+            validate_and_normalize_telemetry(valid_payload(source="REAL_DEVICE")).source,
+            TelemetrySource.REAL_DEVICE,
+        )
+        self.assertEqual(
+            validate_and_normalize_telemetry(valid_payload(source="simulator")).source,
+            TelemetrySource.SIMULATOR,
+        )
+        self._assert_error(valid_payload(source="UNTRUSTED_SOURCE"), "INVALID_TELEMETRY_SOURCE")
 
     def test_identifiers_are_trimmed(self):
         sample = validate_and_normalize_telemetry(
@@ -87,6 +101,22 @@ class TelemetryValidationTests(unittest.TestCase):
             valid_payload(timestamp="2026-01-01T12:00:00+02:00")
         )
         self.assertEqual(sample.timestamp, datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc))
+
+    def test_timestamp_too_far_in_future_fails(self):
+        received_at = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        self._assert_error(
+            valid_payload(timestamp="2026-01-01T10:05:01Z"),
+            "TIMESTAMP_TOO_FAR_IN_FUTURE",
+            received_at=received_at,
+        )
+
+    def test_timestamp_within_clock_skew_is_accepted(self):
+        received_at = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        sample = validate_and_normalize_telemetry(
+            valid_payload(timestamp="2026-01-01T10:05:00Z"),
+            received_at=received_at,
+        )
+        self.assertEqual(sample.timestamp, received_at + timedelta(minutes=5))
 
     def test_missing_temperature_fails(self):
         payload = valid_payload()
@@ -172,9 +202,9 @@ class TelemetryValidationTests(unittest.TestCase):
         self.assertFalse(is_newer_sample(older, previous))
         self.assertFalse(is_newer_sample(previous, previous))
 
-    def _assert_error(self, payload, reason_code):
+    def _assert_error(self, payload, reason_code, **validation_options):
         with self.assertRaises(TelemetryValidationError) as context:
-            validate_and_normalize_telemetry(payload)
+            validate_and_normalize_telemetry(payload, **validation_options)
         self.assertEqual(context.exception.reason_code, reason_code)
 
 

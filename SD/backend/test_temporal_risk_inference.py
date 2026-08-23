@@ -35,6 +35,7 @@ try:
     from .sqlite_identity_repository import SQLiteIdentityAccessRepository
     from .sqlite_telemetry_repository import SQLiteTelemetryStateRepository
     from .state_repository import telemetry_record_from_sample
+    from .telemetry import TelemetrySource
     from .temporal_risk_baseline import (
         BASELINE_MODEL_VERSION,
         TrainingSourceKind,
@@ -99,6 +100,7 @@ except ImportError:
     from sqlite_identity_repository import SQLiteIdentityAccessRepository
     from sqlite_telemetry_repository import SQLiteTelemetryStateRepository
     from state_repository import telemetry_record_from_sample
+    from telemetry import TelemetrySource
     from temporal_risk_baseline import (
         BASELINE_MODEL_VERSION,
         TrainingSourceKind,
@@ -322,6 +324,30 @@ class TemporalRiskFeatureParityTests(unittest.TestCase):
 
 
 class TemporalRiskInferenceServiceTests(unittest.TestCase):
+    def test_real_device_record_remains_in_accepted_inference_history(self):
+        composition = compose_repositories(RepositoryConfig(mode=RepositoryMode.MEMORY))
+        identity = composition.identity_repository
+        history = composition.telemetry_state_repository
+        trip = _active_trip()
+        identity.register_trip_assignment_and_access(
+            trip, contract_assignment(active=True), contract_shipment_access()
+        )
+        sample = replace(contract_sample(minutes=5), source=TelemetrySource.REAL_DEVICE)
+        record = telemetry_record_from_sample(
+            trip.trip_id, trip.lot_trip_id, sample
+        )
+        state = contract_state(sample)
+        decision = contract_decision_record(sample, state)
+        history.commit_processing_bundle(record, state, decision, None, None)
+
+        result = TemporalRiskInferenceService(
+            identity, history, _test_artifact()
+        ).predict(trip.lot_trip_id)
+
+        self.assertIsInstance(result, TemporalRiskPrediction)
+        self.assertEqual(history.get_telemetry_history(trip.lot_trip_id)[0].source, TelemetrySource.REAL_DEVICE)
+        self.assertEqual(result.cutoff_sample_id, sample.sample_id)
+
     def test_memory_repository_path_returns_probability_only(self):
         composition = compose_repositories(
             RepositoryConfig(mode=RepositoryMode.MEMORY)

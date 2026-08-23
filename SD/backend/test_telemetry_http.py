@@ -50,6 +50,7 @@ def raw_sample(environment, *, sample_id="sample-001", elapsed=0, temperature=6.
             environment.start_time + timedelta(minutes=elapsed)
         ).isoformat(),
         "temperature": temperature,
+        "source": "REAL_DEVICE",
     }
 
 
@@ -120,6 +121,7 @@ class TelemetryHttpAdapterTests(unittest.TestCase):
         self.assertTrue(record["timestamp"].endswith("Z"))
         self.assertIsNone(record["batteryLevel"])
         self.assertIsNone(record["latitude"])
+        self.assertEqual(record["source"], "REAL_DEVICE")
         self.assertIsNone(decision["activeRuleId"])
 
     def test_validation_error_maps_to_400_without_internal_message(self):

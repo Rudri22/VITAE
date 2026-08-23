@@ -229,6 +229,14 @@ class RepositorySerializationTests(unittest.TestCase):
             self.record,
         )
 
+    def test_telemetry_v1_defaults_to_manual_test_provenance(self):
+        document = serialize_telemetry_record(self.record)
+        self.assertEqual(document["schema_version"], 2)
+        document["schema_version"] = 1
+        document.pop("source")
+        restored = deserialize_telemetry_record(document)
+        self.assertEqual(restored.source.value, "MANUAL_TEST")
+
     def test_shipment_access_round_trip(self):
         access = contract_shipment_access()
         self.assertEqual(
@@ -386,7 +394,11 @@ class RepositorySerializationTests(unittest.TestCase):
                 expected_version = (
                     2
                     if document["schema"]
-                    in {"vitae.trip_identity", "vitae.alert_outbox_event"}
+                    in {
+                        "vitae.trip_identity",
+                        "vitae.alert_outbox_event",
+                        "vitae.telemetry_record",
+                    }
                     else 1
                 )
                 self.assertEqual(document["schema_version"], expected_version)

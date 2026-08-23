@@ -5,7 +5,7 @@ from typing import Dict, Optional, Protocol, Tuple, runtime_checkable
 
 try:
     from .risk_rules import ApplicationStatus, PreviousState, StatusDecision
-    from .telemetry import ValidatedTelemetrySample, sample_identity
+    from .telemetry import TelemetrySource, ValidatedTelemetrySample, sample_identity
     from .trip_identity import (
         DeviceAssignment,
         TripIdentity,
@@ -16,7 +16,7 @@ try:
     )
 except ImportError:
     from risk_rules import ApplicationStatus, PreviousState, StatusDecision
-    from telemetry import ValidatedTelemetrySample, sample_identity
+    from telemetry import TelemetrySource, ValidatedTelemetrySample, sample_identity
     from trip_identity import (
         DeviceAssignment,
         TripIdentity,
@@ -39,6 +39,7 @@ class TelemetryRecord:
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     device_health: Optional[str] = None
+    source: TelemetrySource = TelemetrySource.MANUAL_TEST
 
 
 @dataclass(frozen=True)
@@ -172,6 +173,7 @@ def telemetry_record_from_sample(
         latitude=sample.latitude,
         longitude=sample.longitude,
         device_health=sample.device_health,
+        source=sample.source,
     )
 
 

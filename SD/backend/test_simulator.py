@@ -288,6 +288,7 @@ class SimulatorTests(unittest.TestCase):
             samples[-1]["timestamp"],
             "2026-01-04T00:10:00+00:00",
         )
+        self.assertTrue(all(sample["source"] == "SIMULATOR" for sample in samples))
 
     def test_optional_battery_is_only_emitted_when_supplied(self):
         scenario = SimulationScenario(

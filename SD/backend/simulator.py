@@ -224,6 +224,7 @@ def generate_samples(
                 start_time + timedelta(minutes=point.elapsed_minutes)
             ).isoformat(),
             "temperature": point.temperature,
+            "source": "SIMULATOR",
         }
         if point.battery_level is not None:
             payload["battery_level"] = point.battery_level

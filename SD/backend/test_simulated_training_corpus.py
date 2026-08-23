@@ -70,6 +70,13 @@ class SimulatedTrainingCorpusTests(unittest.TestCase):
             self.corpus.manifest.source_kind,
             TrainingSourceKind.APPROVED_SIMULATOR.value,
         )
+        self.assertTrue(
+            all(
+                record.source.value == "SIMULATOR"
+                for history in self.corpus.records
+                for record in history.telemetry_records
+            )
+        )
 
     def test_all_scenario_families_are_present_and_balanced(self):
         counts = dict(self.corpus.manifest.scenario_family_counts)
@@ -152,6 +159,10 @@ class SimulatedTrainingCorpusTests(unittest.TestCase):
         self.assertEqual(manifest.schema_version, SIMULATED_CORPUS_SCHEMA_VERSION)
         self.assertEqual(len(manifest.completed_history_sha256), 64)
         self.assertEqual(len(manifest.temporal_examples_sha256), 64)
+        self.assertEqual(len(manifest.journey_examples_sha256), 64)
+        self.assertTrue(
+            all(summary.planned_arrival_at for summary in manifest.trip_summaries)
+        )
 
     def test_persisted_examples_round_trip_with_approved_classification(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -167,6 +178,11 @@ class SimulatedTrainingCorpusTests(unittest.TestCase):
                 manifest["temporal_examples_sha256"],
                 self.corpus.manifest.temporal_examples_sha256,
             )
+            self.assertEqual(
+                manifest["journey_examples_sha256"],
+                self.corpus.manifest.journey_examples_sha256,
+            )
+            self.assertTrue(paths["journey_risk_examples"].is_file())
 
     def test_corpus_passes_structural_training_readiness(self):
         assessment = assess_training_readiness(self.corpus.training_dataset)

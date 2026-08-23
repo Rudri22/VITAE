@@ -19,6 +19,7 @@ try:
     )
     from .risk_rules import ApplicationStatus
     from .state_repository import LiveState, TelemetryRecord
+    from .telemetry import TelemetrySource
     from .shipment_access import ShipmentAccess
     from .temporal_risk_examples import (
         TemporalRiskExample,
@@ -50,6 +51,7 @@ except ImportError:
     )
     from risk_rules import ApplicationStatus
     from state_repository import LiveState, TelemetryRecord
+    from telemetry import TelemetrySource
     from shipment_access import ShipmentAccess
     from temporal_risk_examples import (
         TemporalRiskExample,
@@ -76,6 +78,7 @@ if TYPE_CHECKING:
 SCHEMA_VERSION = 1
 TRIP_IDENTITY_SCHEMA_VERSION = 2
 ALERT_OUTBOX_EVENT_SCHEMA_VERSION = 2
+TELEMETRY_RECORD_SCHEMA_VERSION = 2
 
 
 class RepositorySerializationError(ValueError):
@@ -207,12 +210,20 @@ def serialize_telemetry_record(value: TelemetryRecord) -> dict[str, Any]:
             "latitude": _optional_number(value.latitude, "latitude"),
             "longitude": _optional_number(value.longitude, "longitude"),
             "device_health": _optional_text_value(value.device_health, "device_health"),
+            "source": _enum_value(value.source, TelemetrySource, "source"),
         },
+        schema_version=TELEMETRY_RECORD_SCHEMA_VERSION,
     )
 
 
 def deserialize_telemetry_record(payload: Mapping[str, Any]) -> TelemetryRecord:
-    fields = _fields(payload, "vitae.telemetry_record", _TELEMETRY_FIELDS)
+    version = _schema_version(payload, "vitae.telemetry_record", (1, 2))
+    fields = _fields(
+        payload,
+        "vitae.telemetry_record",
+        _TELEMETRY_V1_FIELDS if version == 1 else _TELEMETRY_V2_FIELDS,
+        supported_versions=(1, 2),
+    )
     return TelemetryRecord(
         trip_id=_text(fields, "trip_id"),
         lot_trip_id=_text(fields, "lot_trip_id"),
@@ -224,6 +235,11 @@ def deserialize_telemetry_record(payload: Mapping[str, Any]) -> TelemetryRecord:
         latitude=_optional_number(fields["latitude"], "latitude"),
         longitude=_optional_number(fields["longitude"], "longitude"),
         device_health=_optional_text_value(fields["device_health"], "device_health"),
+        source=(
+            TelemetrySource.MANUAL_TEST
+            if version == 1
+            else _enum(fields["source"], TelemetrySource, "source")
+        ),
     )
 
 
@@ -1005,7 +1021,8 @@ _TRIP_IDENTITY_V1_FIELDS = frozenset(("trip_id", "lot_trip_id", "lot_id", "devic
 _TRIP_IDENTITY_V2_FIELDS = _TRIP_IDENTITY_V1_FIELDS | frozenset(("completed_at",))
 _ASSIGNMENT_FIELDS = frozenset(("assignment_id", "device_id", "trip_id", "lot_trip_id", "assigned_at", "active"))
 _SHIPMENT_ACCESS_FIELDS = frozenset(("shipment_id", "lot_trip_id", "organization_id", "driver_id"))
-_TELEMETRY_FIELDS = frozenset(("trip_id", "lot_trip_id", "sample_id", "device_id", "timestamp", "temperature", "battery_level", "latitude", "longitude", "device_health"))
+_TELEMETRY_V1_FIELDS = frozenset(("trip_id", "lot_trip_id", "sample_id", "device_id", "timestamp", "temperature", "battery_level", "latitude", "longitude", "device_health"))
+_TELEMETRY_V2_FIELDS = _TELEMETRY_V1_FIELDS | frozenset(("source",))
 _LIVE_STATE_FIELDS = frozenset(("lot_trip_id", "trip_id", "device_id", "product_id", "product_rule_version", "status", "reason_code", "active_rule_id", "last_sample_id", "last_sample_timestamp", "latest_temperature", "last_updated", "excursion_started_at", "excursion_episode_duration_minutes", "cumulative_excursion_duration_minutes", "excursion_utilization", "revision"))
 _STATUS_DECISION_RECORD_FIELDS = frozenset(("decision_id", "trip_id", "lot_trip_id", "device_id", "sample_id", "sample_timestamp", "product_id", "product_rule_version", "engine_version", "previous_live_state_revision", "resulting_live_state_revision", "status", "reason_code", "active_rule_id", "excursion_started_at", "excursion_episode_duration_minutes", "cumulative_excursion_duration_minutes", "excursion_utilization"))
 _ALERT_OUTBOX_EVENT_V1_FIELDS = frozenset(("event_id", "decision_id", "trip_id", "lot_trip_id", "device_id", "sample_id", "event_type", "alert_policy_version", "alert_candidate", "created_at", "delivery_status", "attempt_count", "available_at", "lease_owner", "lease_expires_at", "delivered_at", "last_error_code"))

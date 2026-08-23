@@ -215,6 +215,7 @@ def _serialize_telemetry_record(record):
         "latitude": record.latitude,
         "longitude": record.longitude,
         "deviceHealth": record.device_health,
+        "source": record.source.value,
     }
 
 
