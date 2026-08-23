@@ -33,6 +33,8 @@ try:
         build_temporal_risk_dataset,
         temporal_risk_examples_jsonl,
     )
+    from .journey_risk_examples import build_journey_risk_dataset, journey_risk_examples_jsonl
+    from .journey_risk_training import JourneyRiskTrainingDataset, journey_risk_dataset_fingerprint
     from .trip_identity import DeviceAssignment, TripIdentity, TripStatus
 except ImportError:
     from alerting import InMemoryAlertRepository
@@ -60,6 +62,8 @@ except ImportError:
         build_temporal_risk_dataset,
         temporal_risk_examples_jsonl,
     )
+    from journey_risk_examples import build_journey_risk_dataset, journey_risk_examples_jsonl
+    from journey_risk_training import JourneyRiskTrainingDataset, journey_risk_dataset_fingerprint
     from trip_identity import DeviceAssignment, TripIdentity, TripStatus
 
 
@@ -101,6 +105,7 @@ class SimulatedTripSummary:
     telemetry_count: int
     first_sample_at: datetime
     last_sample_at: datetime
+    planned_arrival_at: datetime
     status_counts: Tuple[Tuple[str, int], ...]
 
 
@@ -118,12 +123,14 @@ class SimulatedCorpusManifest:
     trip_summaries: Tuple[SimulatedTripSummary, ...]
     completed_history_sha256: str
     temporal_examples_sha256: str
+    journey_examples_sha256: str
 
 
 @dataclass(frozen=True)
 class SimulatedTrainingCorpus:
     records: Tuple[CompletedTripDatasetRecord, ...]
     training_dataset: TemporalRiskTrainingDataset
+    journey_training_dataset: JourneyRiskTrainingDataset
     manifest: SimulatedCorpusManifest
 
 
@@ -173,6 +180,14 @@ def build_approved_simulator_corpus(
         source_kind=TrainingSourceKind.APPROVED_SIMULATOR,
         examples=examples,
     )
+    planned_arrivals = {
+        item.lot_trip_id: item.planned_arrival_at for item in summaries
+    }
+    journey_training_dataset = JourneyRiskTrainingDataset(
+        source_id=value.source_id + "-journey-v1",
+        source_kind=TrainingSourceKind.APPROVED_SIMULATOR,
+        examples=build_journey_risk_dataset(records, planned_arrivals),
+    )
     completed_jsonl = completed_trip_dataset_jsonl(records)
     family_counts = Counter(families)
     manifest = SimulatedCorpusManifest(
@@ -192,10 +207,14 @@ def build_approved_simulator_corpus(
         temporal_examples_sha256=temporal_risk_dataset_fingerprint(
             training_dataset
         ),
+        journey_examples_sha256=journey_risk_dataset_fingerprint(
+            journey_training_dataset
+        ),
     )
     return SimulatedTrainingCorpus(
         records=records,
         training_dataset=training_dataset,
+        journey_training_dataset=journey_training_dataset,
         manifest=manifest,
     )
 
@@ -213,11 +232,16 @@ def persist_approved_simulator_corpus(
     completed_path = destination / "completed_trip_histories.jsonl"
     examples_path = destination / "temporal_risk_examples.jsonl"
     manifest_path = destination / "manifest.json"
+    journey_examples_path = destination / "journey_risk_examples.jsonl"
     completed_path.write_text(
         completed_trip_dataset_jsonl(corpus.records), encoding="utf-8"
     )
     examples_path.write_text(
         temporal_risk_examples_jsonl(corpus.training_dataset.examples),
+        encoding="utf-8",
+    )
+    journey_examples_path.write_text(
+        journey_risk_examples_jsonl(corpus.journey_training_dataset.examples),
         encoding="utf-8",
     )
     manifest_path.write_text(
@@ -233,6 +257,7 @@ def persist_approved_simulator_corpus(
         "completed_trip_histories": completed_path,
         "temporal_risk_examples": examples_path,
         "manifest": manifest_path,
+        "journey_risk_examples": journey_examples_path,
     }
 
 
@@ -260,15 +285,19 @@ def simulated_corpus_manifest_document(manifest: SimulatedCorpusManifest) -> dic
                 "telemetry_count": item.telemetry_count,
                 "first_sample_at": _utc_text(item.first_sample_at),
                 "last_sample_at": _utc_text(item.last_sample_at),
+                "planned_arrival_at": _utc_text(item.planned_arrival_at),
                 "status_counts": dict(item.status_counts),
             }
             for item in manifest.trip_summaries
         ],
         "completed_history_sha256": manifest.completed_history_sha256,
         "temporal_examples_sha256": manifest.temporal_examples_sha256,
+        "journey_examples_sha256": manifest.journey_examples_sha256,
         "provenance": {
             "statuses": "persisted deterministic StatusDecisionRecord values",
             "labels": "derived from future persisted decisions within the v1 horizon",
+            "journey_labels": "derived from future persisted decisions through simulator-planned arrival",
+            "journey_horizon": "simulator planned arrival minus cutoff; independent of deterioration time",
             "product_rules": "canonical verified backend ProductRules",
             "performance_scope": "simulator engineering validation only",
         },
@@ -343,6 +372,7 @@ def _run_completed_trip(
         telemetry_count=len(record.telemetry_records),
         first_sample_at=record.telemetry_records[0].timestamp,
         last_sample_at=record.telemetry_records[-1].timestamp,
+        planned_arrival_at=completed_at,
         status_counts=tuple(sorted(status_counts.items())),
     )
     return record, summary
