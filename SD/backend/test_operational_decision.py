@@ -50,6 +50,16 @@ class OperationalDecisionEngineTests(unittest.TestCase):
         self.assertEqual(result.future_risk_category, FutureRiskCategory.HIGH)
         self.assertEqual(result.recommended_action, RecommendedAction.INTERVENE)
 
+    def test_same_deterministic_status_can_change_action_when_forecast_crosses_threshold(self):
+        low = self.engine.decide(ApplicationStatus.SAFE, 0.19)
+        high = self.engine.decide(ApplicationStatus.SAFE, 0.50)
+
+        self.assertEqual(low.current_status, high.current_status)
+        self.assertEqual(low.recommended_action, RecommendedAction.CONTINUE)
+        self.assertEqual(high.recommended_action, RecommendedAction.INTERVENE)
+        self.assertNotIn("HIGH_FUTURE_RISK", low.decision_factors)
+        self.assertIn("HIGH_FUTURE_RISK", high.decision_factors)
+
     def test_monitor_high_forecast_remains_actionable(self):
         result = self.engine.decide(ApplicationStatus.MONITOR, 0.76)
         self.assertEqual(result.recommended_action, RecommendedAction.INTERVENE)

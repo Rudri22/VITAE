@@ -220,6 +220,9 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Local demo captures, copied artifacts, and verification logs
+/tmp/
+
 # PyPI configuration file
 .pypirc
 

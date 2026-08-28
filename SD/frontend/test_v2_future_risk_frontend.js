@@ -85,16 +85,24 @@ function predicted(overrides = {}) {
     cutoffAt: "2026-08-21T11:32:00Z",
     trainingSourceKind: "APPROVED_SIMULATOR",
     limitations: ["Backend-only diagnostic text"],
+    evidenceFactors: [
+      { code: "TEMPERATURE_TREND", label: "Temperature trend", value: 1.25, unit: "C_PER_HOUR", direction: "RISING" },
+      { code: "EXCURSION_UTILIZATION", label: "Excursion utilization", value: 0.42, unit: "FRACTION", direction: "BELOW_HALF" },
+      { code: "BATTERY_LEVEL", label: "Battery health", value: 73, unit: "PERCENT", direction: "STABLE" },
+    ],
     ...overrides,
   };
 }
 
 async function main() {
   const predictedHtml = render(predicted(), "SAFE");
-  assert.match(predictedHtml, /Current condition[\s\S]*SAFE[\s\S]*Authoritative ProductRules/i);
-  assert.match(predictedHtml, /Future risk[\s\S]*LOW[\s\S]*8%/i);
+  assert.match(predictedHtml, /Current condition[\s\S]*SAFE[\s\S]*Deterministic assessment from verified product rules/i);
+  assert.match(predictedHtml, /Future risk[\s\S]*8%/i);
+  assert.match(predictedHtml, /Temperature trend[\s\S]*Rising 1\.3 C\/h/i);
+  assert.match(predictedHtml, /Excursion utilization[\s\S]*42% used/i);
+  assert.match(predictedHtml, /Battery health[\s\S]*73%/i);
   assert.match(predictedHtml, /next 30 minutes/i);
-  assert.match(predictedHtml, /30-minute fallback/i);
+  assert.match(predictedHtml, /30-minute predictive model/i);
   assert.match(predictedHtml, /Simulator-based engineering evaluation/i);
   assert.match(predictedHtml, /Not real-world performance/i);
   assert.match(predictedHtml, /Not clinical validation/i);
@@ -117,7 +125,7 @@ async function main() {
     target: "DETERIORATION_BEFORE_DESTINATION",
     source: "JOURNEY_AWARE_MODEL",
   });
-  assert.match(journeyHtml, /Risk before destination[\s\S]*HIGH[\s\S]*72%/i);
+  assert.match(journeyHtml, /Risk before destination[\s\S]*72%/i);
   assert.match(journeyHtml, /Remaining route[\s\S]*1 h 37 min/i);
   assert.match(journeyHtml, /Journey-aware forecast/i);
   assert.match(journeyHtml, /Additional forecast[\s\S]*8% risk in next 30 min/i);
@@ -128,7 +136,8 @@ async function main() {
     futureRiskHorizonMinutes: 30,
   }, { available: false, reason: "REMAINING_JOURNEY_DURATION_UNAVAILABLE" });
   assert.match(missingJourneyHtml, /Future risk[\s\S]*8%/i);
-  assert.match(missingJourneyHtml, /30-minute fallback/i);
+  assert.match(missingJourneyHtml, /30-minute predictive model/i);
+  assert.match(missingJourneyHtml, /Journey prediction unavailable: remaining journey duration not available/i);
 
   const rerouteHtml = render(predicted({ adverseEventProbability: 0.72 }), "SAFE", {
     futureRiskProbability: 0.72,
@@ -147,6 +156,8 @@ async function main() {
     },
   });
   assert.match(rerouteHtml, /Rerouting recommendation/i);
+  assert.match(rerouteHtml, /Action Center[\s\S]*Recommended action[\s\S]*Eligible facility reduces estimated travel time/i);
+  assert.doesNotMatch(rerouteHtml, /All active shipments are operating normally/i);
   assert.match(rerouteHtml, /Recommended facility[\s\S]*Closer Receiving Center[\s\S]*44 min/i);
   assert.match(rerouteHtml, /Current destination[\s\S]*1 h 26 min/i);
   assert.match(rerouteHtml, /Estimated time saved[\s\S]*42 min/i);
@@ -155,6 +166,28 @@ async function main() {
   assert.match(rerouteHtml, /Evidence[\s\S]*Demo capability profile/i);
   assert.doesNotMatch(rerouteHtml, /ENGINEERING_DEMO_METADATA/);
   assert.match(rerouteHtml, /reduces estimated travel time by 42\.0 minutes/i);
+
+  const noBetterHtml = render(predicted(), "SAFE", {
+    rerouting: {
+      status: "NO_BETTER_ALTERNATIVE",
+      alternativesConsidered: 2,
+      evaluatedCandidates: [
+        { facilityId: "facility-a", displayName: "Facility A", eligible: true, eligibilityReason: "Compatible", distanceKm: 7.4, coordinates: { latitude: 33.89, longitude: 35.50 } },
+        { facilityId: "facility-b", displayName: "Facility B", eligible: false, eligibilityReason: "Product capability unavailable", distanceKm: 5.2 },
+      ],
+      routingEvidenceQuality: "STRAIGHT_LINE_DISTANCE",
+      decisionFactors: { comparisonMetric: "DISTANCE_KM", improvement: 0.4, minimumRequiredImprovement: 1.0 },
+      reason: "No eligible alternative improves the comparable route by at least 1 km.",
+    },
+  });
+  assert.match(noBetterHtml, /2 facilities evaluated/i);
+  assert.match(noBetterHtml, /Best improvement[\s\S]*0\.4 km/i);
+  assert.match(noBetterHtml, /Minimum required[\s\S]*1\.0 km/i);
+  assert.match(noBetterHtml, /Facility A[\s\S]*Eligible[\s\S]*7\.4 km/i);
+  assert.match(noBetterHtml, /Distances are straight-line geographic comparisons/i);
+  assert.match(noBetterHtml, /Improvement \/ result/i);
+  assert.match(noBetterHtml, /google\.com\/maps\/search\/\?api=1&query=33\.89%2C35\.5/i);
+  assert.match(noBetterHtml, /Facility B[\s\S]*Product capability unavailable[\s\S]*Ineligible/i);
 
   const fallbackHtml = render(predicted({ adverseEventProbability: 0.72 }), "SAFE", {
     recommendedAction: "REROUTE",
@@ -227,6 +260,10 @@ async function main() {
   const source = fs.readFileSync(path.join(__dirname, "roles", "organization.js"), "utf8");
   assert.doesNotMatch(source, /adverseEventProbability\s*[><]=?\s*0\./);
   assert.doesNotMatch(source, /fetch\([^)]*future|model.*artifact|joblib/i);
+  assert.doesNotMatch(predictedHtml, />\s*(LOW|MEDIUM|HIGH)\s*</i);
+  assert.doesNotMatch(predictedHtml, /calibrated|validated risk|production risk score/i);
+  assert.match(source, /Geographic distance/);
+  assert.match(source, /Google Maps links are external navigation/);
 
   const css = fs.readFileSync(path.join(__dirname, "styles.css"), "utf8");
   assert.match(css, /--vitae-space-1:\s*8px/);

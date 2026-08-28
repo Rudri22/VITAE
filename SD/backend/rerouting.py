@@ -111,6 +111,8 @@ class ReroutingEvaluation:
     candidate_value: Optional[float] = None
     improvement: Optional[float] = None
     routing_evidence_quality: RoutingEvidenceQuality = RoutingEvidenceQuality.INSUFFICIENT
+    evaluated_candidates: Tuple[RouteCandidate, ...] = ()
+    minimum_required_improvement: Optional[float] = None
 
 
 class ReroutingEvaluator:
@@ -129,7 +131,7 @@ class ReroutingEvaluator:
             return self._insufficient(current, alternatives, "The configured destination could not be resolved.")
         eligible = tuple(candidate for candidate in alternatives if candidate.eligible)
         if not eligible:
-            return ReroutingEvaluation(ReroutingStatus.NO_BETTER_ALTERNATIVE, current, None, len(alternatives), "No alternative has documented administrative and product capability eligibility.")
+            return ReroutingEvaluation(ReroutingStatus.NO_BETTER_ALTERNATIVE, current, None, len(alternatives), "No alternative has documented administrative and product capability eligibility.", evaluated_candidates=alternatives)
         comparison = self._comparable_candidates(current, eligible)
         if comparison is None:
             return self._insufficient(current, alternatives, "Comparable route duration or straight-line distance is unavailable for eligible alternatives.")
@@ -139,9 +141,9 @@ class ReroutingEvaluator:
         improvement = current_value - best_value
         unit = "minutes" if metric == "ROUTE_DURATION_MINUTES" else "km"
         if improvement < minimum_improvement:
-            return ReroutingEvaluation(ReroutingStatus.NO_BETTER_ALTERNATIVE, current, None, len(alternatives), f"No eligible alternative improves the comparable route by at least {minimum_improvement:g} {unit}.", metric, current_value, best_value, improvement, quality)
+            return ReroutingEvaluation(ReroutingStatus.NO_BETTER_ALTERNATIVE, current, None, len(alternatives), f"No eligible alternative improves the comparable route by at least {minimum_improvement:g} {unit}.", metric, current_value, best_value, improvement, quality, alternatives, minimum_improvement)
         description = "route duration" if metric == "ROUTE_DURATION_MINUTES" else "straight-line distance"
-        return ReroutingEvaluation(ReroutingStatus.REROUTE_AVAILABLE, current, best, len(alternatives), f"Eligible product-compatible facility reduces {description} by {improvement:.1f} {unit}.", metric, current_value, best_value, improvement, quality)
+        return ReroutingEvaluation(ReroutingStatus.REROUTE_AVAILABLE, current, best, len(alternatives), f"Eligible product-compatible facility reduces {description} by {improvement:.1f} {unit}.", metric, current_value, best_value, improvement, quality, alternatives, minimum_improvement)
 
     def _comparable_candidates(self, current, eligible):
         if _has_route_duration(current):
@@ -157,7 +159,7 @@ class ReroutingEvaluator:
 
     @staticmethod
     def _insufficient(current, alternatives, reason):
-        return ReroutingEvaluation(ReroutingStatus.INSUFFICIENT_ROUTE_DATA, current, None, len(alternatives), reason)
+        return ReroutingEvaluation(ReroutingStatus.INSUFFICIENT_ROUTE_DATA, current, None, len(alternatives), reason, evaluated_candidates=alternatives)
 
 
 class ApplicationFacilityRouteCandidateProvider:
@@ -264,7 +266,7 @@ def route_candidate_document(candidate):
 
 
 def rerouting_evaluation_document(value):
-    return {"status": value.status.value, "currentDestination": route_candidate_document(value.current_destination), "recommendedCandidate": route_candidate_document(value.recommended_candidate), "alternativesConsidered": value.alternatives_considered, "reason": value.reason, "routingEvidenceQuality": value.routing_evidence_quality.value, "decisionFactors": {"comparisonMetric": value.comparison_metric, "currentDestinationValue": value.current_value, "candidateValue": value.candidate_value, "improvement": value.improvement}}
+    return {"status": value.status.value, "currentDestination": route_candidate_document(value.current_destination), "recommendedCandidate": route_candidate_document(value.recommended_candidate), "alternativesConsidered": value.alternatives_considered, "evaluatedCandidates": [route_candidate_document(candidate) for candidate in value.evaluated_candidates], "reason": value.reason, "routingEvidenceQuality": value.routing_evidence_quality.value, "decisionFactors": {"comparisonMetric": value.comparison_metric, "currentDestinationValue": value.current_value, "candidateValue": value.candidate_value, "improvement": value.improvement, "minimumRequiredImprovement": value.minimum_required_improvement}}
 
 
 def coordinates_document(value):

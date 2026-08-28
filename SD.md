@@ -1,6 +1,6 @@
 # VITAE Engineering Readiness
 
-This document describes the implemented VITAE software at checkpoint `21fd121`.
+This document describes the final implemented VITAE software.
 VITAE is an engineering prototype for monitored cold-chain shipments. Its V2
 path keeps deterministic product-condition decisions, operational alert state,
 trip lifecycle, and optional future-risk inference separate.
@@ -101,7 +101,7 @@ From the repository root:
 
 ```powershell
 python -m pip install -r SD/backend/requirements.txt
-python SD/backend/app.py
+python -m SD.backend.app
 ```
 
 Open `http://127.0.0.1:8000`. The Python server also serves

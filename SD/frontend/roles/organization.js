@@ -56,7 +56,7 @@
           ${live.length ? `<div class="org-live-rows">${live.map(liveShipmentRow).join("")}</div>` : window.VitaeUI.empty("No active shipments are currently moving.")}
           ${(data.activeShipments || []).length > 3 ? `<footer><button class="foundation-link" data-role-page="shipments" type="button">View all shipments</button></footer>` : ""}
         </section>
-        <section class="foundation-panel org-action-center"><header><div><span class="foundation-eyebrow">Prioritized work</span><h2>Action Center</h2></div></header>${actionCenter(data)}<footer><button class="foundation-link" data-role-page="alerts" type="button">View all alerts</button></footer></section>
+        <section class="foundation-panel org-action-center"><header><div><span class="foundation-eyebrow">Prioritized work</span><h2>Action Center</h2></div></header>${actionCenter(data, state.v2Monitoring)}<footer><button class="foundation-link" data-role-page="alerts" type="button">View all alerts</button></footer></section>
       </div>`;
   }
 
@@ -90,13 +90,13 @@
         <article class="org-monitor-signal org-monitor-current" aria-labelledby="org-current-status-title">
           <h3 id="org-current-status-title">Current condition</h3>
           <div class="org-monitor-current-value">${window.VitaeUI.badge(statusLabel, statusTone(status))}</div>
-          <p>${live ? "Authoritative ProductRules assessment" : "Waiting for the first accepted device reading"}</p>
+          <p>${live ? "Deterministic assessment from verified product rules" : "Waiting for the first accepted device reading"}</p>
         </article>
         ${primaryRiskCard(payload.journeyRisk, payload.futureRisk30m || payload.futureRisk, payload.operationalDecision)}
         ${operationalDecisionCard(payload.operationalDecision)}
       </div>
       ${reroutingPanel(payload.operationalDecision?.rerouting, payload.operationalDecision?.journeyContext)}
-      <details class="org-monitor-supporting">
+      <details class="org-monitor-supporting" data-ui-state-key="organization-monitor:${esc(trip.lotTripId)}">
         <summary>Supporting details</summary>
         ${journeyAvailable ? additionalForecast(payload.futureRisk30m || payload.futureRisk) : ""}
         <dl class="org-monitor-detail-grid">
@@ -109,7 +109,7 @@
           ${monitoringDetail("Last accepted reading", live?.lastUpdated ? dateTime(live.lastUpdated) : "No telemetry received")}
           ${journeyDetail(payload.operationalDecision?.journeyContext)}
         </dl>
-        <div class="org-monitor-model-note"><strong>Decision basis</strong><p>ProductRules assess configured conditions now. Journey ML estimates deterioration before destination. The operational engine recommends what to do; rerouting compares only eligible destinations with available evidence.</p><small>Simulator-based engineering evaluation. Not real-world performance. Not clinical validation.</small></div>
+        <div class="org-monitor-model-note"><strong>Decision basis</strong><p>Verified product rules assess conditions now. Predictive models estimate future deterioration. The decision engine recommends what to do; rerouting compares only eligible destinations with available evidence.</p><small>Simulator-based engineering evaluation. Not real-world performance. Not clinical validation.</small></div>
       </details>
     </section>`;
   }
@@ -118,7 +118,7 @@
     if (validJourneyRiskPrediction(journey)) {
       return `<article class="org-monitor-signal org-monitor-journey" data-journey-risk-state="PREDICTED" aria-labelledby="org-journey-risk-title">
         <h3 id="org-journey-risk-title">Risk before destination</h3>
-        <strong class="org-risk-value">${riskCategory(decision)} <span>${formatProbability(journey.probability)}</span></strong>
+        <strong class="org-risk-value"><span>${formatProbability(journey.probability)}</span></strong>
         <p>Predicted deterioration before the current destination</p>
         <footer>Remaining route: ${formatDuration(journey.horizonMinutes)}<br><small>Journey-aware ML · simulator-trained engineering model</small></footer>
       </article>`;
@@ -126,9 +126,10 @@
     if (validFutureRiskPrediction(fixed)) {
       return `<article class="org-monitor-signal org-monitor-future" data-future-risk-state="PREDICTED" aria-labelledby="org-future-risk-title">
         <h3 id="org-future-risk-title">Future risk</h3>
-        <strong class="org-risk-value">${riskCategory(decision)} <span>${formatProbability(fixed.adverseEventProbability)}</span></strong>
-        <p>Predicted deterioration in the next 30 minutes</p>
-        <footer><small>30-minute fallback · simulator-trained engineering model</small></footer>
+        <strong class="org-risk-value"><span>${formatProbability(fixed.adverseEventProbability)}</span></strong>
+        <p>Predicted adverse-event probability in the next 30 minutes</p>
+        ${predictionFactors(fixed)}
+        <footer><small>30-minute predictive model · simulator-trained engineering model${journey?.reason === "REMAINING_JOURNEY_DURATION_UNAVAILABLE" ? "<br>Journey prediction unavailable: remaining journey duration not available" : ""}</small></footer>
       </article>`;
     }
     const message = fixed?.state === "NOT_PREDICTED"
@@ -172,18 +173,52 @@
       const capability = candidate.capabilityBasis
         ? `<div><dt>Compatibility</dt><dd>Compatible with shipment profile</dd></div><div><dt>Evidence</dt><dd>Demo capability profile</dd></div>`
         : `<div><dt>Compatibility</dt><dd>Not confirmed</dd></div>`;
-      return `<section class="org-rerouting-panel" data-rerouting-status="${esc(value.status)}"><header><div><span class="foundation-eyebrow">Destination decision</span><h3>${value.status === "REROUTE_RECOMMENDED" ? "Rerouting recommendation" : "Eligible alternative"}</h3></div><strong>${value.status === "REROUTE_RECOMMENDED" ? "REROUTE" : "AVAILABLE"}</strong></header><dl>${comparison}${progress ? `<div><dt>Estimated journey progress</dt><dd>${progress}</dd></div>` : ""}${capability}<div><dt>Why</dt><dd>${esc(value.reason || "A better eligible alternative is available.")}</dd></div></dl></section>`;
+      return `<section class="org-rerouting-panel" data-rerouting-status="${esc(value.status)}"><header><div><span class="foundation-eyebrow">Destination decision</span><h3>${value.status === "REROUTE_RECOMMENDED" ? "Rerouting recommendation" : "Eligible alternative"}</h3></div><strong>${value.status === "REROUTE_RECOMMENDED" ? "REROUTE" : "AVAILABLE"}</strong></header><dl>${comparison}${progress ? `<div><dt>Estimated journey progress</dt><dd>${progress}</dd></div>` : ""}${capability}<div><dt>Why</dt><dd>${esc(value.reason || "A better eligible alternative is available.")}</dd></div></dl>${routeCandidateTable(value)}</section>`;
     }
     if (value.status === "INSUFFICIENT_ROUTE_DATA") {
-      return `<section class="org-rerouting-panel org-rerouting-empty"><h3>Rerouting unavailable</h3><p>No trustworthy route comparison is available.</p></section>`;
+      return `<section class="org-rerouting-panel org-rerouting-empty"><h3>Rerouting unavailable</h3><p>No trustworthy route comparison is available.</p>${routeCandidateTable(value)}</section>`;
     }
     if (value.status === "NO_BETTER_ALTERNATIVE") {
       const fallback = value.routingEvidenceQuality === "STRAIGHT_LINE_DISTANCE"
         ? " Road ETA is unavailable; comparison used distance fallback only."
         : "";
-      return `<section class="org-rerouting-panel org-rerouting-empty"><h3>No better eligible destination found</h3><p>The available route and compatibility evidence does not support rerouting.${fallback}</p></section>`;
+      const factors = value.decisionFactors || {};
+      const comparison = typeof factors.improvement === "number" && typeof factors.minimumRequiredImprovement === "number"
+        ? `<p><strong>Best improvement: ${esc(formatRouteImprovement(factors.improvement, factors.comparisonMetric))}.</strong> Minimum required: ${esc(formatRouteImprovement(factors.minimumRequiredImprovement, factors.comparisonMetric))}. Decision: continue to the current destination.</p>`
+        : `<p>The available route and compatibility evidence does not support rerouting.${fallback}</p>`;
+      return `<section class="org-rerouting-panel org-rerouting-empty"><h3>No better eligible destination found</h3><p>${esc(value.alternativesConsidered || 0)} facilities evaluated.</p>${comparison}${routeCandidateTable(value)}</section>`;
     }
     return "";
+  }
+
+  function routeCandidateTable(value) {
+    const candidates = Array.isArray(value?.evaluatedCandidates) ? value.evaluatedCandidates : [];
+    if (!candidates.length) return "";
+    const factors = value.decisionFactors || {};
+    return `<details class="org-route-candidates" data-ui-state-key="organization-route-candidates" open><summary>Facility evaluation (${candidates.length})</summary><div role="table" aria-label="Facility routing evidence"><div role="row" class="org-route-candidate-head"><span role="columnheader">Facility</span><span role="columnheader">Eligibility</span><span role="columnheader">Geographic distance</span><span role="columnheader">Improvement / result</span></div>${candidates.map((candidate) => `<div role="row"><span role="cell"><strong>${esc(candidate.displayName)}</strong><small>${esc(candidate.eligibilityReason)}</small>${facilityMapLink(candidate)}</span><span role="cell">${candidate.eligible ? "Eligible" : "Ineligible"}</span><span role="cell">${typeof candidate.etaMinutes === "number" ? `${formatDuration(candidate.etaMinutes)} route duration` : typeof candidate.distanceKm === "number" ? `${candidate.distanceKm.toFixed(1)} km` : "Unavailable"}</span><span role="cell">${candidateDecision(value, candidate, factors)}</span></div>`).join("")}</div><small class="org-route-method">Distances are straight-line geographic comparisons unless route duration is explicitly shown. Google Maps links are external navigation, not VITAE-computed routes.</small></details>`;
+  }
+
+  function candidateDecision(value, candidate, factors) {
+    if (!candidate.eligible) return "Excluded";
+    if (value.recommendedCandidate?.facilityId === candidate.facilityId) return "Recommended";
+    const candidateValue = factors.comparisonMetric === "ROUTE_DURATION_MINUTES" ? candidate.etaMinutes : candidate.distanceKm;
+    if (typeof factors.currentDestinationValue === "number" && typeof candidateValue === "number") {
+      const improvement = factors.currentDestinationValue - candidateValue;
+      return `${formatRouteImprovement(improvement, factors.comparisonMetric)} improvement · Not selected`;
+    }
+    return "Eligible · Not selected";
+  }
+
+  function facilityMapLink(candidate) {
+    const latitude = Number(candidate?.coordinates?.latitude);
+    const longitude = Number(candidate?.coordinates?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return "";
+    const query = encodeURIComponent(`${latitude},${longitude}`);
+    return `<a href="https://www.google.com/maps/search/?api=1&query=${query}" target="_blank" rel="noopener noreferrer">View location</a>`;
+  }
+
+  function formatRouteImprovement(value, metric) {
+    return metric === "ROUTE_DURATION_MINUTES" ? formatDuration(value) : `${Number(value).toFixed(1)} km`;
   }
 
   function additionalForecast(value) {
@@ -198,10 +233,20 @@
     return `${monitoringDetail("Journey progress", progress)}${monitoringDetail("Remaining route", remaining)}`;
   }
 
-  function riskCategory(value) {
-    return value && ["LOW", "MEDIUM", "HIGH"].includes(value.futureRiskCategory)
-      ? esc(value.futureRiskCategory)
-      : "";
+  function predictionFactors(value) {
+    const factors = Array.isArray(value?.evidenceFactors) ? value.evidenceFactors.slice(0, 4) : [];
+    if (!factors.length) return "";
+    return `<ul class="org-prediction-factors" aria-label="Prediction evidence">${factors.map((factor) => `<li><span>${esc(factor.label)}</span><strong>${esc(formatEvidenceFactor(factor))}</strong></li>`).join("")}</ul>`;
+  }
+
+  function formatEvidenceFactor(factor) {
+    const value = Number(factor.value);
+    if (!Number.isFinite(value)) return "Unavailable";
+    if (factor.unit === "C_PER_HOUR") return `${value > 0.05 ? "Rising " : value < -0.05 ? "Falling " : "Stable "}${Math.abs(value).toFixed(1)} C/h`;
+    if (factor.unit === "FRACTION") return `${(value * 100).toFixed(0)}% used`;
+    if (factor.unit === "PERCENT") return `${value.toFixed(0)}%`;
+    if (factor.unit === "MINUTES") return formatDuration(value);
+    return String(value);
   }
 
   function formatProbability(value) {
@@ -311,8 +356,20 @@
     </button>`;
   }
 
-  function actionCenter(data) {
+  function actionCenter(data, monitoring) {
     const items = [];
+    const decision = monitoring?.data?.operationalDecision;
+    if (["INTERVENE", "REROUTE", "EXPEDITE", "STOP_OR_REPLACE"].includes(decision?.recommendedAction)) {
+      items.push({
+        kind: "Recommended action",
+        id: monitoring.shipmentId || monitoring.data?.tripIdentity?.lotTripId,
+        text: decision.reason,
+        tone: decision.urgency || "warning",
+        time: monitoring.data?.liveState?.lastUpdated,
+        rank: decision.recommendedAction === "STOP_OR_REPLACE" ? 0 : 1,
+        action: "shipment-detail",
+      });
+    }
     const criticalAlertShipments = new Set((data.alerts || []).filter((alert) => alert.status !== "resolved" && alert.severity === "critical").map((alert) => alert.shipmentId));
     (data.shipments || []).forEach((shipment) => {
       if ((shipment.riskLevel === "critical" || shipment.riskLevel === "high") && !criticalAlertShipments.has(shipment.shipmentId)) items.push({ kind: "Shipment risk", id: shipment.shipmentId, text: (shipment.riskExplanation || ["Cold-chain risk requires review."])[0], tone: shipment.riskLevel, time: shipment.lastUpdated, rank: riskRank(shipment.riskLevel), action: "shipment-detail" });
@@ -361,7 +418,7 @@
       <div class="org-quick-section"><h3>Pickup and delivery</h3><div class="org-form-grid"><label><span>Pick up from *</span><select name="originFacilityId" required><option value="">Choose pickup</option>${recordOptions(facilities, "facilityId", "name", d.originFacilityId)}</select></label><label><span>Deliver to *</span><select name="destinationFacilityId" required><option value="">Choose destination</option>${recordOptions(facilities, "facilityId", "name", d.destinationFacilityId)}</select></label><label><span>Send request to *</span><select name="driverId" required><option value="">Choose driver</option>${recordOptions(drivers, "driverId", "name", selectedDriver)}</select><small>The Driver must accept before the trip begins.</small></label></div></div>
       <aside class="org-auto-plan"><span aria-hidden="true">✓</span><div><strong>VITAE prepares the rest</strong><p><b data-auto-temperature>${profile.min}°C to ${profile.max}°C</b> storage · target delivery within <b data-auto-hours>${profile.hours} hours</b> · refrigerated vehicle and sensor assigned automatically.</p></div></aside>
       ${v2SetupFields(setup, d, contexts, availableSensors, selectedContext)}
-      <details class="org-request-options"><summary>Change temperature, timing, or instructions</summary><p>Use these only when this shipment has special requirements.</p><div class="org-form-grid">${field("Minimum °C", "safeTemperatureMin", d.safeTemperatureMin ?? profile.min, "number", false, "step=\"0.1\"")}${field("Maximum °C", "safeTemperatureMax", d.safeTemperatureMax ?? profile.max, "number", false, "step=\"0.1\"")}${field("Ready for pickup", "departureAt", departure, "datetime-local")}${field("Deliver by", "expectedArrival", arrival, "datetime-local")}<label class="org-wide"><span>Special instructions</span><textarea name="handlingNotes" rows="3" placeholder="Optional">${esc(d.handlingNotes || profile.handling)}</textarea></label></div></details>
+      <details class="org-request-options" data-ui-state-key="organization-request-options"><summary>Change temperature, timing, or instructions</summary><p>Use these only when this shipment has special requirements.</p><div class="org-form-grid">${field("Minimum °C", "safeTemperatureMin", d.safeTemperatureMin ?? profile.min, "number", false, "step=\"0.1\"")}${field("Maximum °C", "safeTemperatureMax", d.safeTemperatureMax ?? profile.max, "number", false, "step=\"0.1\"")}${field("Ready for pickup", "departureAt", departure, "datetime-local")}${field("Deliver by", "expectedArrival", arrival, "datetime-local")}<label class="org-wide"><span>Special instructions</span><textarea name="handlingNotes" rows="3" placeholder="Optional">${esc(d.handlingNotes || profile.handling)}</textarea></label></div></details>
       <input name="submissionId" type="hidden" value="${esc(d.submissionId)}"><div class="org-quick-submit"><p>The request appears immediately in the selected Driver’s app.</p><button class="foundation-primary" type="submit" ${org.saving || !drivers.length ? "disabled" : ""}>${org.saving ? "Sending…" : "Send Request to Driver"}</button></div>
     </form></section>`;
   }
@@ -370,16 +427,16 @@
     const enabled = draft.v2Enabled === true;
     const unavailable = setup.status !== "ready";
     const message = setup.status === "error"
-      ? setup.error || "V2 monitoring options are unavailable."
+      ? setup.error || "Verified monitoring options are unavailable."
       : setup.status === "loading" || setup.status === "idle"
         ? "Loading verified product contexts and devices."
         : !contexts.length
           ? "No verified product contexts are currently available."
-          : "Uses verified ProductRules and deterministic product condition monitoring.";
+          : "Uses verified product rules and deterministic condition monitoring.";
     return `<section class="org-v2-setup ${enabled ? "enabled" : ""}">
       <label class="org-v2-toggle">
         <input name="v2Enabled" type="checkbox" value="true" ${enabled ? "checked" : ""} ${unavailable || !contexts.length ? "disabled" : ""}>
-        <span><strong>Enable V2 monitoring</strong><small>${esc(message)}</small></span>
+        <span><strong>Enable verified monitoring</strong><small>${esc(message)}</small></span>
       </label>
       ${enabled ? `<div class="org-v2-fields">
         <label><span>Product context *</span><select name="v2ContextIndex" required><option value="">Choose a verified context</option>${contexts.map((context, index) => `<option value="${index}" ${String(index) === String(draft.v2ContextIndex) ? "selected" : ""}>${esc(`${context.productName} - ${human(context.presentation)} - ${human(context.state)}`)}</option>`).join("")}</select></label>
@@ -408,10 +465,10 @@
     const item = (state.data.shipments || []).find((entry) => entry.shipmentId === org.selectedShipmentId);
     if (!item) return "";
     const canAssign = ["planned", "pending"].includes(item.status), verify = item.status === "awaiting_verification";
-    return `<div class="org-modal-backdrop" data-org-modal-backdrop><section class="org-detail" role="dialog" aria-modal="true" aria-label="Shipment details"><header><div><span class="foundation-eyebrow">Shipment ${esc(item.shipmentId)}</span><h2>${esc(item.productName)}</h2><div>${window.VitaeUI.badge(item.status)} ${window.VitaeUI.badge(item.conditionStatus || item.riskLevel)}</div></div><div class="org-row-actions"><button class="foundation-primary" data-org-action="map" data-id="${esc(item.shipmentId)}" type="button">Open route</button><button data-org-action="close-detail" type="button">Close</button></div></header>
+    return `<div class="org-modal-backdrop" data-org-modal-backdrop><section class="org-detail" data-ui-scroll-key="organization-shipment-dialog:${esc(item.shipmentId)}" role="dialog" aria-modal="true" aria-label="Shipment details"><header><div><span class="foundation-eyebrow">Shipment ${esc(item.shipmentId)}</span><h2>${esc(item.productName)}</h2><div>${window.VitaeUI.badge(item.status)} ${window.VitaeUI.badge(item.conditionStatus || item.riskLevel)}</div></div><div class="org-row-actions"><button class="foundation-primary" data-org-action="map" data-id="${esc(item.shipmentId)}" type="button">Open route</button><button data-org-action="close-detail" type="button">Close</button></div></header>
       <div class="org-detail-primary"><section><h3>Current condition</h3><dl>${item.lotTripId ? detail("Deterministic status", item.conditionStatus || "No telemetry yet") : ""}${detail("Temperature", temperature(item.temperature))}${detail("Required range", range(item))}${detail("Battery", item.batteryLevel == null ? "Unavailable" : `${item.batteryLevel}%`)}${detail("ETA", dateTime(item.expectedArrival))}${detail("Remaining safe time", item.remainingSafeTime || "Not available")}</dl></section><section><h3>Shipment and route</h3><dl>${detail("Origin", item.origin)}${detail("Destination", item.destinationHospitalName)}${detail("Current location", item.currentLocation || "GPS unavailable")}${detail("Driver", item.driverName || "Unassigned")}${detail("Vehicle / container", item.vehicleId || item.containerId)}${detail("Sensor", item.sensorId)}</dl><button class="foundation-secondary" data-org-action="map" data-id="${esc(item.shipmentId)}" type="button">Open Google Maps</button></section></div>
-      <details class="org-detail-disclosure"><summary>Monitoring and history</summary><div class="org-detail-grid"><section><h3>Temperature history</h3>${temperatureHistory(item)}</section><section><h3>Monitoring decision</h3>${window.VitaeUI.badge(item.conditionStatus || item.riskLevel)}<p>${esc(item.conditionReasonCode ? human(item.conditionReasonCode) : (item.riskExplanation || []).join(" ") || "No decision explanation is available.")}</p><strong>Recommended action</strong><p>${esc(item.recommendedAction)}</p></section></div></details>
-      <details class="org-detail-disclosure"><summary>Lifecycle and handoff details</summary><div class="org-detail-grid">${v2IdentityPanel(item)}<section><h3>Timeline</h3>${timeline(item.timeline || [])}</section><section><h3>Assignment and handoff</h3><dl>${detail("Driver", item.driverName)}${detail("Vehicle / container", item.vehicleId || item.containerId)}${detail("Sensor", item.sensorId)}${detail("Destination confirmation", human(item.destinationVerificationStatus || "pending"))}${item.destinationVerificationCode ? detail("Destination handoff code", item.destinationVerificationCode) : ""}</dl>${item.destinationVerificationCode ? `<p class="org-handoff-help">Share this one-time code with the receiving desk. The Driver must enter it at arrival.</p>` : ""}${canAssign ? assignmentForm(state, item) : ""}</section></div></details>${verify ? verificationPanel(item) : item.verification ? finalDeliveryReport(item) : ""}</section></div>`;
+      <details class="org-detail-disclosure" data-ui-state-key="organization-shipment-monitoring:${esc(item.shipmentId)}"><summary>Monitoring and history</summary><div class="org-detail-grid"><section><h3>Temperature history</h3>${temperatureHistory(item)}</section><section><h3>Monitoring decision</h3>${window.VitaeUI.badge(item.conditionStatus || item.riskLevel)}<p>${esc(item.conditionReasonCode ? human(item.conditionReasonCode) : (item.riskExplanation || []).join(" ") || "No decision explanation is available.")}</p><strong>Recommended action</strong><p>${esc(item.recommendedAction)}</p></section></div></details>
+      <details class="org-detail-disclosure" data-ui-state-key="organization-shipment-lifecycle:${esc(item.shipmentId)}"><summary>Lifecycle and handoff details</summary><div class="org-detail-grid">${v2IdentityPanel(item)}<section><h3>Timeline</h3>${timeline(item.timeline || [])}</section><section><h3>Assignment and handoff</h3><dl>${detail("Driver", item.driverName)}${detail("Vehicle / container", item.vehicleId || item.containerId)}${detail("Sensor", item.sensorId)}${detail("Destination confirmation", human(item.destinationVerificationStatus || "pending"))}${item.destinationVerificationCode ? detail("Destination handoff code", item.destinationVerificationCode) : ""}</dl>${item.destinationVerificationCode ? `<p class="org-handoff-help">Share this one-time code with the receiving desk. The Driver must enter it at arrival.</p>` : ""}${canAssign ? assignmentForm(state, item) : ""}</section></div></details>${verify ? verificationPanel(item) : item.verification ? finalDeliveryReport(item) : ""}</section></div>`;
   }
 
   function trackingPage(state, org) {
@@ -438,15 +495,32 @@
 
   function v2AlertSection(v2) {
     let content;
-    if (v2.status === "error") content = `<p class="org-inline-error" role="alert">${esc(v2.error || "V2 alerts are unavailable.")}</p>`;
-    else if (v2.status === "loading" || v2.status === "idle") content = window.VitaeUI.empty("Loading V2 alerts.");
-    else content = v2.alerts.length ? v2.alerts.map(v2AlertCard).join("") : window.VitaeUI.empty("No V2 alert history for monitored shipments.");
-    return `<section class="foundation-panel"><header><div><span class="foundation-eyebrow">Deterministic pipeline</span><h2>V2 Alerts</h2></div></header><div class="org-alert-list">${content}</div></section>`;
+    if (v2.status === "error") content = `<p class="org-inline-error" role="alert">${esc(v2.error || "Verified alerts are unavailable.")}</p>`;
+    else if (v2.status === "loading" || v2.status === "idle") content = window.VitaeUI.empty("Loading verified alerts.");
+    else if (v2.alerts.length) {
+      const ordered = [...v2.alerts].sort((left, right) => alertPriority(left) - alertPriority(right) || String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+      content = ordered.map((item, index) => v2OperationalAlertCard(item, index === 0 && item.status !== "RESOLVED")).join("");
+    } else content = window.VitaeUI.empty("No verified alert history for monitored shipments.");
+    return `<section class="foundation-panel"><header><div><span class="foundation-eyebrow">Verified monitoring</span><h2>Cold-chain alerts</h2></div></header><div class="org-alert-list">${content}</div></section>`;
   }
 
   function v2AlertCard(item) {
     const resolved = item.status === "RESOLVED";
-    return `<article data-v2-alert-id="${esc(item.alertId)}"><header><div><strong>${esc(human(item.alertType))}</strong><span>${esc(item.shipmentId)} · ${dateTime(item.detectedAt)}</span></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.severity)}${window.VitaeUI.badge(item.status)}</div></header><p>${esc(item.message)}</p><dl>${detail("Product condition at detection", human(item.sourceStatus))}${detail("Reason", human(item.reasonCode))}${detail("Recommended action", item.recommendedAction)}${detail("Recorded actions", item.actions?.length || 0)}${detail("Last update", dateTime(item.updatedAt))}</dl>${resolved ? `<span class="org-action-complete">Resolved · retained in history</span>` : `<div class="org-row-actions">${item.status === "OPEN" ? `<button data-org-action="v2-alert-ack" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}" type="button">Acknowledge</button>` : ""}<details><summary>Record action</summary><form class="v2-alert-command-form" data-org-form="v2-alert-action" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Action taken</span><input name="description" required maxlength="300"></label><button type="submit">Save action</button></form></details><details><summary>Resolve</summary><form class="v2-alert-command-form" data-org-form="v2-alert-resolve" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Resolution note</span><input name="resolutionNote" required maxlength="300"></label><button type="submit">Resolve alert</button></form></details></div>`}</article>`;
+    return `<article data-v2-alert-id="${esc(item.alertId)}"><header><div><strong>${esc(human(item.alertType))}</strong><span>${esc(item.shipmentId)} · ${dateTime(item.detectedAt)}</span></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.severity)}${window.VitaeUI.badge(item.status)}</div></header><p>${esc(item.message)}</p><dl>${detail("Product condition at detection", human(item.sourceStatus))}${detail("Reason", human(item.reasonCode))}${detail("Recommended action", item.recommendedAction)}${detail("Recorded actions", item.actions?.length || 0)}${detail("Last update", dateTime(item.updatedAt))}</dl>${resolved ? `<span class="org-action-complete">Resolved · retained in history</span>` : `<div class="org-row-actions">${item.status === "OPEN" ? `<button data-org-action="v2-alert-ack" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}" type="button">Acknowledge</button>` : ""}<details data-ui-state-key="organization-alert-action:${esc(item.alertId)}"><summary>Record action</summary><form class="v2-alert-command-form" data-org-form="v2-alert-action" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Action taken</span><input name="description" required maxlength="300"></label><button type="submit">Save action</button></form></details><details data-ui-state-key="organization-alert-resolve:${esc(item.alertId)}"><summary>Resolve</summary><form class="v2-alert-command-form" data-org-form="v2-alert-resolve" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Resolution note</span><input name="resolutionNote" required maxlength="300"></label><button type="submit">Resolve alert</button></form></details></div>`}</article>`;
+  }
+
+  function alertPriority(item) {
+    const lifecycle = { OPEN: 0, ACKNOWLEDGED: 1, RESOLVED: 3 }[item.status] ?? 2;
+    const severity = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }[item.severity] ?? 4;
+    return lifecycle * 10 + severity;
+  }
+
+  function v2OperationalAlertCard(item, current = false) {
+    const resolved = item.status === "RESOLVED";
+    const ownership = item.status === "OPEN" ? "Organization operations"
+      : item.status === "ACKNOWLEDGED" ? `Acknowledged by ${item.acknowledgedBy || "operator"}`
+        : "Closed";
+    return `<article class="org-v2-alert-card" data-v2-alert-id="${esc(item.alertId)}"><header><div><span class="foundation-eyebrow">${esc(human(item.severity))} alert</span><strong>${esc(human(item.alertType))}</strong><span>${esc(item.shipmentId)} Â· ${dateTime(item.detectedAt)}</span></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.severity)}${window.VitaeUI.badge(item.status)}</div></header><div class="org-alert-priority"><section><span>What happened</span><strong>${esc(item.message)}</strong></section><section><span>Recommended action</span><strong>${esc(item.recommendedAction)}</strong></section></div><dl class="org-alert-ownership">${detail("Current ownership", ownership)}${detail("Recorded actions", item.actions?.length || 0)}${detail("Last update", dateTime(item.updatedAt))}</dl><details data-ui-state-key="organization-alert-evidence:${esc(item.alertId)}"><summary>Supporting evidence</summary><dl>${detail("Condition at detection", human(item.sourceStatus))}${detail("Reason", human(item.reasonCode))}${detail("Alert ID", item.alertId)}</dl></details>${resolved ? `<span class="org-action-complete">Resolved Â· retained in history</span>` : `<div class="org-row-actions">${item.status === "OPEN" ? `<button data-org-action="v2-alert-ack" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}" type="button">Acknowledge</button>` : ""}<details data-ui-state-key="organization-alert-action:${esc(item.alertId)}"><summary>Record action</summary><form class="v2-alert-command-form" data-org-form="v2-alert-action" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Action taken</span><input name="description" required maxlength="300"></label><button type="submit">Save action</button></form></details><details data-ui-state-key="organization-alert-resolve:${esc(item.alertId)}"><summary>Resolve</summary><form class="v2-alert-command-form" data-org-form="v2-alert-resolve" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Resolution note</span><input name="resolutionNote" required maxlength="300"></label><button type="submit">Resolve alert</button></form></details></div>`}</article>`;
   }
 
   function driversPage(state, org) {
@@ -484,7 +558,7 @@
     if (["map", "map-live"].includes(action)) { actions.openMap(findShipment(state, id)); return true; }
     if (action === "alert-notify") return perform(async () => { await api(`/api/organization/alerts/${id}`, "PATCH", { status: "acknowledged", driverResponse: "Driver notified by organization operations." }); await actions.reload(); actions.notify("Driver notification recorded."); }, actions);
     if (action === "alert-update") return perform(async () => { const status = button.dataset.status; if (status === "escalated" && !confirm("Escalate this alert to Support and create a linked ticket?")) return; await api(`/api/organization/alerts/${id}`, "PATCH", { status }); await actions.reload(); actions.notify(status === "escalated" ? "Alert escalated and linked to Support." : `Alert marked ${human(status).toLowerCase()}.`); }, actions);
-    if (action === "v2-alert-ack") return perform(async () => { await actions.v2AlertCommand(button.dataset.lotTripId, id, "acknowledge"); actions.notify("V2 alert acknowledged."); }, actions);
+    if (action === "v2-alert-ack") return perform(async () => { await actions.v2AlertCommand(button.dataset.lotTripId, id, "acknowledge"); actions.notify("Alert acknowledged."); }, actions);
     if (action === "driver-availability") return perform(async () => { await api(`/api/organization/drivers/${id}`, "PATCH", { status: button.dataset.status }); await actions.reload(); actions.notify("Driver availability updated."); }, actions);
     return true;
   }
@@ -512,7 +586,7 @@
         );
         if (!context) { org.formError = "Choose a verified product context."; actions.render(); return true; }
         if (!String(formValues.v2LotId || "").trim()) { org.formError = "Enter the manufacturer lot ID."; actions.render(); return true; }
-        if (!sensor) { org.formError = "Choose an available sensor for V2 monitoring."; actions.render(); return true; }
+        if (!sensor) { org.formError = "Choose an available sensor for verified monitoring."; actions.render(); return true; }
         payload.productName = context.productName;
         payload.sensorId = sensor.sensorId;
         payload.v2Monitoring = {
@@ -537,8 +611,8 @@
     if (form.dataset.orgForm === "verify") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); if (!confirm(`Confirm final decision: ${payload.decision}?`)) return true; return perform(async () => { await api(`/api/organization/shipments/${form.dataset.id}/verification`, "PATCH", payload); org.selectedShipmentId = null; await actions.reload(); actions.notify("Delivery verification recorded."); }, actions); }
     if (form.dataset.orgForm === "ticket") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { const result = await api("/api/organization/tickets", "POST", payload); org.selectedTicketId = result.ticket.ticketId; await actions.reload(); actions.notify("Support ticket created."); }, actions); }
     if (form.dataset.orgForm === "ticket-reply") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await api(`/api/organization/tickets/${form.dataset.id}/messages`, "POST", payload); await actions.reload(); actions.notify("Public reply sent to Support."); }, actions); }
-    if (form.dataset.orgForm === "v2-alert-action") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "action", payload); actions.notify("V2 alert action recorded."); }, actions); }
-    if (form.dataset.orgForm === "v2-alert-resolve") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "resolve", payload); actions.notify("V2 alert resolved."); }, actions); }
+    if (form.dataset.orgForm === "v2-alert-action") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "action", payload); actions.notify("Alert action recorded."); }, actions); }
+    if (form.dataset.orgForm === "v2-alert-resolve") { event.preventDefault(); const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "resolve", payload); actions.notify("Alert resolved."); }, actions); }
     return false;
   }
 
@@ -581,8 +655,8 @@
   }
 
   function assignmentForm(state, item) { const eligible = (state.data.drivers || []).filter((driver) => ["available", "assigned"].includes(driver.status)); return `<form class="org-inline-form" data-org-form="assign" data-id="${esc(item.shipmentId)}"><label><span>Assign before departure</span><select name="driverId" required>${recordOptions(eligible, "driverId", "name", item.driverId)}</select></label><button type="submit">Update driver</button></form>`; }
-  function v2Lifecycle(item) { return item?.lotTripId && item?.tripStatus ? `<small class="vitae-v2-lifecycle"><span>V2 trip</span>${window.VitaeUI.badge(item.tripStatus)}</small>` : ""; }
-  function v2IdentityPanel(item) { return item?.lotTripId ? `<section><h3>V2 monitoring identity</h3><dl>${detail("Trip lifecycle", human(item.tripStatus))}${detail("Lot trip ID", item.lotTripId)}${detail("Trip ID", item.tripId)}${detail("Rule version", item.productRuleVersion)}</dl></section>` : ""; }
+  function v2Lifecycle(item) { return item?.lotTripId && item?.tripStatus ? `<small class="vitae-v2-lifecycle"><span>Trip</span>${window.VitaeUI.badge(item.tripStatus)}</small>` : ""; }
+  function v2IdentityPanel(item) { return item?.lotTripId ? `<section><h3>Monitoring identity</h3><dl>${detail("Trip lifecycle", human(item.tripStatus))}${detail("Lot trip ID", item.lotTripId)}${detail("Trip ID", item.tripId)}${detail("Rule version", item.productRuleVersion)}</dl></section>` : ""; }
   function eligibleAssignmentForm(state, driver) { const shipments = (state.data.shipments || []).filter((item) => ["planned", "pending"].includes(item.status)); return shipments.length ? `<form class="org-inline-form" data-org-form="assign" data-id="${esc(shipments[0].shipmentId)}"><label><span>Assign ${esc(driver.name)} to an eligible shipment</span><select name="driverId"><option value="${esc(driver.driverId)}">${esc(shipments[0].shipmentId)} · ${esc(shipments[0].productName)}</option></select></label><button type="submit">Assign</button></form>` : ""; }
   function verificationPanel(item) { return `<section class="org-verification"><span class="foundation-eyebrow">Destination confirmed</span><h3>Review and finalize the delivery</h3><dl>${detail("Driver", item.driverName)}${detail("Destination handoff", human(item.destinationVerificationStatus))}${detail("Handoff confirmed", dateTime(item.destinationVerifiedAt))}${detail("Arrival time", dateTime(item.arrivalTime))}${detail("Receiver", item.receiverName || "Not recorded")}${detail("Delivery notes", item.deliveryNotes || "None")}${detail("Temperature violations", item.alerts?.length || 0)}${detail("Driver actions", (item.driverActions || []).join(", ") || "None recorded")}</dl>${signatureEvidence(item.receiverSignature)}<form data-org-form="verify" data-id="${esc(item.shipmentId)}"><label><span>Final decision *</span><select name="decision" required>${options(["accept", "flag", "reject"])}</select></label><label><span>Verification notes</span><textarea name="notes" rows="3" placeholder="Required for flag or rejection"></textarea></label><button class="foundation-primary" type="submit">Finalize Delivery</button></form></section>`; }
   function finalDeliveryReport(item) { const v = item.verification; return `<section class="org-verification"><span class="foundation-eyebrow">Final delivery report</span><h3>${esc(human(v.decision))} delivery</h3><dl>${detail("Shipment", item.shipmentId)}${detail("Driver", item.driverName)}${detail("Destination handoff", human(item.destinationVerificationStatus))}${detail("Receiver", item.receiverName || "Not recorded")}${detail("Organization user", v.userName)}${detail("Decision time", dateTime(v.timestamp))}${detail("Arrival temperature", temperature(item.temperature))}${detail("Required range", range(item))}${detail("Notes", v.notes || "No notes")}</dl>${signatureEvidence(item.receiverSignature)}</section>`; }

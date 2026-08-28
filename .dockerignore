@@ -11,9 +11,13 @@ secrets*.json
 __pycache__
 **/__pycache__
 *.py[cod]
+**/test_*.py
+**/test_*.js
 SD/backend/generated_datasets
 SD/backend/ml_artifacts
 SD/backend/ml_runs
 tmp
 *.sqlite
 *.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal

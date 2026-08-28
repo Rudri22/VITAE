@@ -92,6 +92,15 @@ class TemporalRiskNotPredictedReason(str, Enum):
 
 
 @dataclass(frozen=True)
+class TemporalRiskEvidenceFactor:
+    code: str
+    label: str
+    value: float
+    unit: str
+    direction: str
+
+
+@dataclass(frozen=True)
 class TemporalRiskPrediction:
     prediction_version: str
     lot_trip_id: str
@@ -108,6 +117,7 @@ class TemporalRiskPrediction:
     training_source_kind: TrainingSourceKind
     performance_scope: str
     limitations: Tuple[str, ...]
+    evidence_factors: Tuple[TemporalRiskEvidenceFactor, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -321,6 +331,7 @@ class TemporalRiskInferenceService:
                     ),
                     performance_scope=self._artifact.performance_scope,
                     limitations=self._artifact.limitations,
+                    evidence_factors=_prediction_evidence(features),
                 )
             )
         return TemporalRiskNotPredicted(
@@ -549,6 +560,15 @@ def validate_temporal_risk_prediction(
         not isinstance(item, str) or not item.strip() for item in value.limitations
     ):
         raise TemporalRiskInferenceError("limitations must be immutable text")
+    if not isinstance(value.evidence_factors, tuple) or not 0 <= len(value.evidence_factors) <= 4:
+        raise TemporalRiskInferenceError("evidence_factors must contain at most four factors")
+    for factor in value.evidence_factors:
+        if not isinstance(factor, TemporalRiskEvidenceFactor):
+            raise TemporalRiskInferenceError("evidence_factors are invalid")
+        for field in ("code", "label", "unit", "direction"):
+            _required_text(getattr(factor, field), field)
+        if not isinstance(factor.value, (int, float)) or not isfinite(factor.value):
+            raise TemporalRiskInferenceError("evidence factor value must be finite")
     return value
 
 
@@ -580,7 +600,67 @@ def temporal_risk_prediction_document(
         "trainingSourceKind": prediction.training_source_kind.value,
         "performanceScope": prediction.performance_scope,
         "limitations": list(prediction.limitations),
+        "evidenceFactors": [
+            {
+                "code": factor.code,
+                "label": factor.label,
+                "value": factor.value,
+                "unit": factor.unit,
+                "direction": factor.direction,
+            }
+            for factor in prediction.evidence_factors
+        ],
     }
+
+
+def _prediction_evidence(features):
+    factors = [
+        TemporalRiskEvidenceFactor(
+            "TEMPERATURE_TREND",
+            "Temperature trend",
+            float(features.temperature_slope_c_per_hour),
+            "C_PER_HOUR",
+            _direction(features.temperature_slope_c_per_hour, 0.05),
+        )
+    ]
+    if not features.current_excursion_utilization_missing:
+        factors.append(
+            TemporalRiskEvidenceFactor(
+                "EXCURSION_UTILIZATION",
+                "Excursion utilization",
+                float(features.current_excursion_utilization),
+                "FRACTION",
+                "ELEVATED" if features.current_excursion_utilization >= 0.5 else "BELOW_HALF",
+            )
+        )
+    if not features.latest_battery_level_missing:
+        factors.append(
+            TemporalRiskEvidenceFactor(
+                "BATTERY_LEVEL",
+                "Battery health",
+                float(features.latest_battery_level_percent),
+                "PERCENT",
+                "LOW" if features.latest_battery_level_percent <= 30 else "STABLE",
+            )
+        )
+    factors.append(
+        TemporalRiskEvidenceFactor(
+            "OBSERVATION_SPAN",
+            "Observed history",
+            float(features.observation_span_minutes),
+            "MINUTES",
+            "AVAILABLE",
+        )
+    )
+    return tuple(factors[:4])
+
+
+def _direction(value, threshold):
+    if value > threshold:
+        return "RISING"
+    if value < -threshold:
+        return "FALLING"
+    return "STABLE"
 
 
 def _aligned_prefix(trip, telemetry, decisions):

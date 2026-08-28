@@ -129,20 +129,20 @@ async function main() {
     assert.match(orgHtml, new RegExp(`Trip lifecycle[\\s\\S]*${status}`));
     assert.match(orgHtml, /Delivery workflow/);
     assert.match(orgHtml, /Current condition/);
-    assert.match(orgHtml, /ProductRules/);
+    assert.match(orgHtml, /Verified product rules/i);
     if (status === "COMPLETED") assert.match(orgHtml, /Trip completed/);
 
     const group = status === "PLANNED" ? "acceptedDeliveries" : status === "ACTIVE" ? "activeDeliveries" : "completedDeliveries";
     const page = status === "ACTIVE" ? "trip" : "deliveries";
     const driverHtml = window.VitaeDriver.render(driverState(shipment, group), page);
-    assert.match(driverHtml, /V2 trip/);
+    assert.match(driverHtml, /Trip/);
     assert.match(driverHtml, new RegExp(status));
   }
 
   const legacy = mappedShipment({ shipmentId: "legacy-only", lotTripId: null, tripId: null, tripStatus: null });
   const orgLegacyHtml = window.VitaeOrganization.render(organizationState(legacy, null), "shipments");
   const driverLegacyHtml = window.VitaeDriver.render(driverState(legacy, "acceptedDeliveries"), "deliveries");
-  assert.doesNotMatch(orgLegacyHtml, /V2 trip lifecycle|V2 monitoring identity/);
+  assert.doesNotMatch(orgLegacyHtml, /Lot trip ID|Monitoring identity/);
   assert.doesNotMatch(driverLegacyHtml, /V2 trip lifecycle|V2 trip/);
 
   const accepted = mappedShipment({

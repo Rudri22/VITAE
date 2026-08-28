@@ -218,6 +218,11 @@ SHIPMENTS = {
         "vehicleId": "van-12",
         "containerId": "container-v2-001",
         "sensorId": "device-sim-001",
+        "tripId": "trip-sim-001",
+        "v2DeviceAssignmentId": "assignment-sim-001",
+        "tripStatus": "ACTIVE",
+        "destinationVerificationCode": "246810",
+        "destinationVerificationStatus": "pending",
         "temperature": None,
         "batteryLevel": None,
         "coolingUnitStatus": "normal",
@@ -877,7 +882,15 @@ def get_organization_foundation_dashboard_data(
             "activeShipments": len(active),
             "incomingShipments": len([item for item in active if item.get("status") in ["in_transit", "active", "at_risk"]]),
             "completedShipments": reports["completedShipments"],
-            "atRiskShipments": len([item for item in active if item.get("riskLevel") in ["critical", "high"]]),
+            "atRiskShipments": len([
+                item for item in active
+                if (
+                    item.get("conditionStatus")
+                    in {"AT_RISK", "CRITICAL", "RULE_VIOLATION"}
+                    if item.get("conditionStatus") is not None
+                    else item.get("riskLevel") in {"critical", "high"}
+                )
+            ]),
             "criticalAlerts": len([item for item in alerts if item.get("severity") == "critical" and item.get("status") != "resolved"]),
             "availableDrivers": len([item for item in drivers if item.get("status") == "available"]),
             "recentDeliveries": len([item for item in shipments if item.get("status") in ["delivered", "awaiting_verification"]]),
@@ -2892,6 +2905,8 @@ def driver_shipment_record(shipment, telemetry_state_repository=None):
         "safeTemperatureMin": shipment.get("safeTemperatureMin"),
         "safeTemperatureMax": shipment.get("safeTemperatureMax"),
         "temperature": monitor.get("temperature"),
+        "conditionStatus": monitor.get("conditionStatus"),
+        "conditionReasonCode": monitor.get("conditionReasonCode"),
         "batteryLevel": monitor.get("batteryLevel"),
         "sensorStatus": monitor.get("sensorStatus"),
         "coolingUnitStatus": monitor.get("coolingUnitStatus"),
@@ -3217,6 +3232,7 @@ def support_shipment_context(shipment_id, telemetry_state_repository=None):
         "driverId": shipment.get("driverId"), "driverName": (DRIVERS.get(shipment.get("driverId")) or {}).get("name"),
         "status": shipment.get("status"), "currentLocation": monitor.get("currentLocation"),
         "temperature": monitor.get("temperature"), "safeTemperatureMin": shipment.get("safeTemperatureMin"), "safeTemperatureMax": shipment.get("safeTemperatureMax"),
+        "conditionStatus": monitor.get("conditionStatus"), "conditionReasonCode": monitor.get("conditionReasonCode"),
         "sensorId": shipment.get("sensorId"), "sensorStatus": monitor.get("sensorStatus"), "batteryLevel": monitor.get("batteryLevel"),
         "lastUpdated": monitor.get("lastUpdated"), "recentAlerts": alerts[-4:], "actionsTaken": deepcopy(shipment.get("driverActions", [])),
     }

@@ -13,6 +13,12 @@ const appState = {
   liveTimer: null,
   workspaceTimer: null,
   workspaceRenderPending: false,
+  liveRefreshSequence: 0,
+  workspaceRefreshSequence: 0,
+  v2AlertRefreshSequence: 0,
+  v2MonitoringRefreshSequence: 0,
+  renderedViewKey: null,
+  localDemo: { status: "idle", demo: null, monitoring: null, error: null },
   v2Monitoring: { status: "idle", data: null, error: null },
   v2Alerts: { status: "idle", alerts: [], error: null },
   v2ShipmentOptions: {
@@ -35,6 +41,7 @@ window.addEventListener("vitae:session-expired", () => {
   stopV2MonitoringPolling();
   appState.user = null;
   appState.data = null;
+  appState.renderedViewKey = null;
   window.history.replaceState({}, "", "/login");
   showLogin("Your session expired. Please sign in again.");
 });
@@ -158,6 +165,7 @@ async function loadWorkspace() {
   stopLivePolling();
   stopWorkspacePolling();
   stopV2MonitoringPolling();
+  appState.renderedViewKey = null;
   appState.page = defaultPage(appState.user.role);
   showOnly("roleView");
   document.getElementById("roleView").innerHTML = `<main class="foundation-state-page" aria-busy="true"><span class="foundation-state-spinner" aria-hidden="true"></span><h1>Loading your VITAE workspace</h1><p>Connecting to live operations dataâ€¦</p></main>`;
@@ -215,8 +223,18 @@ function handleBootFailure(error) {
 
 function renderWorkspace() {
   const config = ROLE_CONFIG[appState.user.role];
+  const roleView = document.getElementById("roleView");
+  const viewKey = `${appState.user.role}:${appState.page}`;
+  const sameView = appState.renderedViewKey === viewKey;
+  const interactionState = sameView
+    ? window.VitaeUI.captureInteractionState(roleView)
+    : null;
+  const html = config.renderer().render(appState, appState.page);
   showOnly("roleView");
-  document.getElementById("roleView").innerHTML = config.renderer().render(appState, appState.page);
+  if (sameView) window.VitaeUI.reconcileHtml(roleView, html);
+  else roleView.innerHTML = html;
+  appState.renderedViewKey = viewKey;
+  window.VitaeUI.restoreInteractionState(roleView, interactionState);
 }
 
 async function handleRoleClick(event) {
@@ -239,6 +257,10 @@ async function handleRoleClick(event) {
       && appState.page === "alerts"
     ) {
       await refreshV2Alerts();
+    }
+    if (appState.user?.role === "admin" && appState.page === "simulation") {
+      await loadLocalDemo();
+      renderWorkspace();
     }
     return;
   }
@@ -296,8 +318,31 @@ function adminActions() {
       renderWorkspace();
     },
     openMap,
+    reloadLocalDemo: loadLocalDemo,
+    advanceLocalDemo: async () => {
+      appState.localDemo = { ...appState.localDemo, status: "advancing", error: null };
+      renderWorkspace();
+      try {
+        const payload = await window.VitaeAuth.api("/api/admin/local-demo/next", { method: "POST", body: "{}" });
+        appState.localDemo = { status: "ready", ...payload, error: null };
+      } catch (error) {
+        appState.localDemo = { ...appState.localDemo, status: "error", error: error.message };
+        throw error;
+      }
+      renderWorkspace();
+    },
     notify: showToast,
   };
+}
+
+async function loadLocalDemo() {
+  appState.localDemo = { ...appState.localDemo, status: "loading", error: null };
+  try {
+    const payload = await window.VitaeAuth.api("/api/admin/local-demo");
+    appState.localDemo = { status: "ready", ...payload, error: null };
+  } catch (error) {
+    appState.localDemo = { status: "error", demo: null, monitoring: null, error: error.message };
+  }
 }
 
 function organizationActions() {
@@ -363,10 +408,13 @@ function showToast(message, tone = "success") {
 }
 
 async function refreshLiveShipments() {
+  const sequence = ++appState.liveRefreshSequence;
   try {
     const payload = await window.shipmentApi.fetchLiveShipments();
+    if (sequence !== appState.liveRefreshSequence) return;
     appState.live = { status: "ready", shipments: payload.shipments || [], alerts: payload.alerts || [], source: payload.source, lastFetchedAt: new Date().toISOString() };
   } catch (error) {
+    if (sequence !== appState.liveRefreshSequence) return;
     appState.live = { status: "error", shipments: [], alerts: [], error: error.message, lastFetchedAt: new Date().toISOString() };
   }
   const protectedWorkflow = isProtectedWorkflow();
@@ -387,8 +435,10 @@ async function refreshWorkspaceData() {
   if (!appState.user?.role) return;
   const config = ROLE_CONFIG[appState.user.role];
   if (!config) return;
+  const sequence = ++appState.workspaceRefreshSequence;
   try {
     const nextData = await window.VitaeAuth.api(config.endpoint);
+    if (sequence !== appState.workspaceRefreshSequence) return;
     if (JSON.stringify(nextData) !== JSON.stringify(appState.data)) {
       appState.data = nextData;
       appState.workspaceRenderPending = true;
@@ -413,6 +463,7 @@ async function refreshWorkspaceData() {
 }
 
 async function refreshV2Alerts(render = true) {
+  const sequence = ++appState.v2AlertRefreshSequence;
   const shipments = v2AlertShipments();
   if (!shipments.length) {
     appState.v2Alerts = { status: "ready", alerts: [], error: null };
@@ -427,6 +478,7 @@ async function refreshV2Alerts(render = true) {
         payload: await window.VitaeV2AlertApi.listAlerts(shipment.lotTripId),
       })),
     );
+    if (sequence !== appState.v2AlertRefreshSequence) return;
     appState.v2Alerts = {
       status: "ready",
       alerts: responses.flatMap(({ shipment, payload }) =>
@@ -439,6 +491,7 @@ async function refreshV2Alerts(render = true) {
       error: null,
     };
   } catch (error) {
+    if (sequence !== appState.v2AlertRefreshSequence) return;
     appState.v2Alerts = {
       ...appState.v2Alerts,
       status: "error",
@@ -514,8 +567,10 @@ async function refreshV2Monitoring(render = true) {
   if (appState.user?.role !== "organization_user") return;
   const lotTripId = appState.v2Monitoring.lotTripId;
   if (!lotTripId) return;
+  const sequence = ++appState.v2MonitoringRefreshSequence;
   try {
     const data = await window.VitaeV2MonitoringApi.fetchLive(lotTripId);
+    if (sequence !== appState.v2MonitoringRefreshSequence || appState.v2Monitoring.lotTripId !== lotTripId) return;
     appState.v2Monitoring = {
       ...appState.v2Monitoring,
       status: "ready",
@@ -524,6 +579,7 @@ async function refreshV2Monitoring(render = true) {
       lastFetchedAt: new Date().toISOString(),
     };
   } catch (error) {
+    if (sequence !== appState.v2MonitoringRefreshSequence || appState.v2Monitoring.lotTripId !== lotTripId) return;
     appState.v2Monitoring = {
       ...appState.v2Monitoring,
       status: "error",
@@ -542,6 +598,7 @@ function startV2MonitoringPolling() {
     lotTripId,
     {
       onData: (data) => {
+        if (appState.v2Monitoring.lotTripId !== lotTripId) return;
         appState.v2Monitoring = {
           ...appState.v2Monitoring,
           status: "ready",
@@ -552,6 +609,7 @@ function startV2MonitoringPolling() {
         if (appState.page === "dashboard" && !isProtectedWorkflow()) renderWorkspace();
       },
       onError: (error) => {
+        if (appState.v2Monitoring.lotTripId !== lotTripId) return;
         appState.v2Monitoring = {
           ...appState.v2Monitoring,
           status: "error",
@@ -624,10 +682,10 @@ function openMap(shipment) {
   const destination = gpsParam(destinationGps);
   const embed = current && destination ? `https://maps.google.com/maps?saddr=${encodeURIComponent(current)}&daddr=${encodeURIComponent(destination)}&output=embed` : destination ? `https://maps.google.com/maps?q=${encodeURIComponent(destination)}&z=13&output=embed` : current ? `https://maps.google.com/maps?q=${encodeURIComponent(current)}&z=13&output=embed` : "";
   const external = current && destination ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(current)}&destination=${encodeURIComponent(destination)}` : destination ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}` : "https://www.google.com/maps";
-  const routeTitle = shipment.routeTitle || "Shipment route";
+  const routeTitle = shipment.routeTitle || "External map preview";
   const modal = document.createElement("div");
   modal.className = "foundation-map-modal";
-  modal.innerHTML = `<section role="dialog" aria-modal="true" aria-label="${window.VitaeUI.escape(routeTitle)}"><header><div><span>${window.VitaeUI.escape(routeTitle)}</span><h2>${window.VitaeUI.escape(shipment.shipmentId)}</h2></div><button data-close-map type="button" aria-label="Close route map">Close</button></header>${embed ? `<iframe title="Route for ${window.VitaeUI.escape(shipment.shipmentId)}" src="${window.VitaeUI.escape(embed)}" loading="lazy"></iframe>` : window.VitaeUI.empty("Open Google Maps to navigate using your current device location.")}<footer><span>${window.VitaeUI.escape(shipment.routeDestination || shipment.currentLocation || "Current location")}</span><a href="${window.VitaeUI.escape(external)}" target="_blank" rel="noopener">Start in Google Maps</a></footer></section>`;
+  modal.innerHTML = `<section role="dialog" aria-modal="true" aria-label="${window.VitaeUI.escape(routeTitle)}"><header><div><span>${window.VitaeUI.escape(routeTitle)}</span><h2>${window.VitaeUI.escape(shipment.shipmentId)}</h2></div><button data-close-map type="button" aria-label="Close route map">Close</button></header>${embed ? `<iframe title="Google Maps preview for ${window.VitaeUI.escape(shipment.shipmentId)}" src="${window.VitaeUI.escape(embed)}" loading="lazy"></iframe>` : window.VitaeUI.empty("Open Google Maps to navigate using your current device location.")}<footer><span>Google Maps navigation · not VITAE-computed route evidence</span><a href="${window.VitaeUI.escape(external)}" target="_blank" rel="noopener">Open in Google Maps</a></footer></section>`;
   document.body.appendChild(modal);
   modal.addEventListener("click", handleRoleClick);
 }
@@ -680,6 +738,7 @@ function logout() {
   window.VitaeAuth.clearSession();
   appState.user = null;
   appState.data = null;
+  appState.renderedViewKey = null;
   navigate("/login");
 }
 

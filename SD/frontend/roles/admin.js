@@ -4,11 +4,12 @@
   const ROLES = [["admin", "Admin"], ["organization_user", "Organization User"], ["driver", "Driver"], ["support", "Support Agent"]];
 
   function render(state, page = "dashboard") {
-    if (!NAV.some(([id]) => id === page)) page = "dashboard";
+    const nav = state.data.localDemoControlsEnabled ? [...NAV, ["simulation", "Demo Flow"]] : NAV;
+    if (!nav.some(([id]) => id === page)) page = "dashboard";
     const ui = window.VitaeUI;
     const pageMeta = {
       dashboard: ["Operations Overview", "Monitor platform health and access key operations."],
-      simulation: ["Shipment Simulation Center", "Generate controlled local telemetry through VITAE's real sensor-processing pipeline."],
+      simulation: ["Continuous Demo Flow", "Advance one local shipment through VITAE's real monitoring and lifecycle pipeline."],
       organizations: ["Organizations", "Manage every organization connected to VITAE."],
       users: ["Platform users", "Manage access, roles, and organization assignments."],
       shipments: ["All shipments", "Monitor cold-chain movements across the platform."],
@@ -26,7 +27,7 @@
       roleClass: `admin-foundation-shell ${page === "dashboard" ? "admin-dashboard-shell" : ""}`,
       roleLabel: "Platform Administration",
       user: state.user,
-      nav: NAV,
+      nav,
       active: page,
       header: ui.pageHeader("Platform control", title, subtitle, action),
       content: pageContent(page, state.data, state),
@@ -34,7 +35,7 @@
   }
 
   function pageContent(page, data, state) {
-    if (page === "simulation") return simulationPage(state);
+    if (page === "simulation") return localDemoPage(state);
     if (page === "organizations") return organizationsPage(data);
     if (page === "users") return usersPage(data);
     if (page === "shipments") return shipmentsPage(data);
@@ -101,6 +102,52 @@
     </div>`;
   }
 
+  function localDemoPage(state) {
+    const source = state.localDemo || { status: "loading" };
+    if (["loading", "idle"].includes(source.status)) return `<section class="foundation-panel admin-sim-state" aria-busy="true"><span class="foundation-state-spinner" aria-hidden="true"></span><h2>Loading local demo flow</h2></section>`;
+    if (source.status === "error" && !source.demo) return `<section class="foundation-panel admin-sim-state" role="alert"><span class="foundation-error-code">!</span><h2>Local demo unavailable</h2><p>${e(source.error)}</p><button class="foundation-primary" data-admin-action="local-demo-retry" type="button">Try again</button></section>`;
+    const demo = source.demo || {};
+    const monitoring = source.monitoring || {};
+    const live = monitoring.liveState;
+    const decision = monitoring.operationalDecision;
+    const futureRisk = monitoring.futureRisk30m || monitoring.futureRisk;
+    const next = demo.nextStep;
+    const last = source.result || demo.lastResult;
+    const accepted = last?.telemetryResponse?.telemetryAccepted === true;
+    const acceptedCount = Number(last?.acceptedSampleCount || (accepted ? 1 : 0));
+    const revision = monitoring.liveState?.revision;
+    return `<div class="admin-simulation-layout">
+      <section class="foundation-panel admin-sim-control">
+        <header><div><span class="foundation-eyebrow">Local-only controlled demonstration</span><h2>One shipment, real state transitions</h2><p>Every step uses validated telemetry, authoritative persistence, alerts, and lifecycle services.</p></div>${badge(demo.complete ? "Complete" : `${demo.currentStep}/${demo.totalSteps}`)}</header>
+        ${last ? `<div class="admin-demo-confirmation" role="status"><strong>${accepted ? `${e(acceptedCount)} accepted telemetry ${acceptedCount === 1 ? "sample" : "samples"}` : `${e(last.step?.label || "Demo step")} completed`}</strong><span>Authoritative revision ${revision == null ? "unchanged" : e(revision)} · ${e(live?.status ? h(live.status) : "No reading")} · ${e(decision?.recommendedAction ? h(decision.recommendedAction) : "No action")}</span></div>` : ""}
+        <dl class="admin-demo-current">${detail("Shipment", demo.lotTripId)}${detail("Current step", last?.step?.label || "No reading")}${detail("Authoritative revision", revision == null ? "No revision" : String(revision))}${detail("Current condition", live?.status ? h(live.status) : "No reading")}${detail("Temperature", live?.latestTemperature == null ? "No reading" : `${Number(live.latestTemperature).toFixed(1)} C`)}${detail("Predicted 30-minute risk", demoFutureRisk(futureRisk))}${detail("Recommended action", live?.status && decision?.recommendedAction ? h(decision.recommendedAction) : "Waiting for telemetry")}${detail("Why", live?.status && decision?.reason ? decision.reason : "Waiting for accepted telemetry")}${detail("Active alerts", String(monitoring.openAlertCount || 0))}${detail("Trip", h(monitoring.tripIdentity?.status || "ACTIVE"))}</dl>
+        ${demoHeroComparison(demo.heroComparison)}
+        ${next ? `<div class="admin-demo-next"><span>Next event to inject</span><strong>${e(next.label)}</strong><small>${next.kind === "TELEMETRY" ? `${e(next.temperature)} C submitted through the real telemetry pipeline` : next.kind === "INTERVENTION" ? "Acknowledge and record corrective action" : "Complete through the atomic lifecycle transaction"}</small></div><button class="foundation-primary" data-admin-action="local-demo-next" type="button" ${source.status === "advancing" ? "disabled" : ""}>${source.status === "advancing" ? "Processing..." : "Next state"}</button>` : `<p class="admin-demo-complete">Sequence complete. Restart the isolated memory-mode server to reset the demo safely.</p>`}
+        ${source.error ? `<p class="admin-sim-error" role="alert">${e(source.error)}</p>` : ""}
+      </section>
+      <section class="foundation-panel admin-sim-monitor" aria-live="polite"><header><div><span class="foundation-eyebrow">Evidence trail</span><h2>Cause and effect</h2></div></header><div class="admin-demo-pipeline"><span>Telemetry accepted</span><i>&rarr;</i><span>Revision ${revision == null ? "—" : e(revision)}</span><i>&rarr;</i><span>${e(live?.status ? h(live.status) : "No reading")}</span><i>&rarr;</i><span>${e(demoFutureRisk(futureRisk))}</span><i>&rarr;</i><strong>${e(decision?.recommendedAction ? h(decision.recommendedAction) : "Waiting")}</strong></div><ol class="admin-demo-steps">${(demo.steps || []).map((step, index) => `<li class="${index < demo.currentStep ? "complete" : index === demo.currentStep ? "next" : ""}"><span>${index < demo.currentStep ? "Done" : index === demo.currentStep ? "Next" : index + 1}</span><strong>${e(step.label)}</strong><small>${e(h(step.kind))}</small></li>`).join("")}</ol></section>
+      <section class="foundation-panel admin-sim-scenarios"><header><div><span class="foundation-eyebrow">Safety boundary</span><h2>Why this is trustworthy</h2></div></header><p>This control exists only when explicitly enabled in local memory mode. It cannot run against DynamoDB or production, and it never assigns a status directly.</p><div class="admin-sim-pipeline"><span>Telemetry</span><i>&rarr;</i><span>Validation</span><i>&rarr;</i><span>Product rules</span><i>&rarr;</i><span>Alerts + UI</span></div></section>
+    </div>`;
+  }
+
+  function demoFutureRisk(value) {
+    return value?.state === "PREDICTED" && Number.isFinite(value.adverseEventProbability)
+      ? `${(value.adverseEventProbability * 100).toFixed(2)}% predicted adverse-event probability`
+      : "Unavailable";
+  }
+
+  function demoHeroComparison(comparison = {}) {
+    const baseline = comparison.baseline;
+    const intervene = comparison.intervene;
+    if (!baseline) return "";
+    const card = (item, fallbackLabel) => item ? `<article class="${item === intervene ? "decision-change" : ""}">
+      <span>Comparison ${e(item.label || fallbackLabel)}</span>
+      <strong>${e(h(item.currentCondition))}</strong>
+      <dl>${detail("Forecast", Number.isFinite(item.adverseEventProbability) ? `${(item.adverseEventProbability * 100).toFixed(3)}%` : "Unavailable")}${detail("Action", h(item.recommendedAction))}${detail("Accepted samples", String(item.acceptedSamples))}${detail("Excursion history", `${Number(item.excursionMinutes).toFixed(0)} minutes`)}${detail("Utilization", `${(Number(item.excursionUtilization) * 100).toFixed(1)}%`)}</dl>
+    </article>` : `<article class="pending"><span>Comparison ${fallbackLabel}</span><strong>Next state</strong><p>One more accepted reading completes the comparison.</p></article>`;
+    return `<section class="admin-demo-hero" aria-label="Same current condition future-risk comparison"><header><span>ML evidence</span><h3>Same current condition, different accumulated history</h3></header><div>${card(baseline, "A")}<i aria-hidden="true">&rarr;</i>${card(intervene, "B")}</div><p>ProductRules remains <strong>MONITOR</strong>. Only accepted shipment history changes; when the forecast crosses the existing 50% engineering threshold, the recommendation changes from <strong>MONITOR</strong> to <strong>INTERVENE</strong>.</p></section>`;
+  }
+
   function simMetric(label, value, tone = "") { return `<article class="${attr(tone)}"><span>${e(label)}</span><strong>${e(value)}</strong></article>`; }
   function formatElapsed(seconds) { const value = Number(seconds || 0); return `${Math.floor(value / 60)}m ${value % 60}s`; }
   function timeOnly(value) { const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
@@ -131,38 +178,38 @@
   function organizationsPage(data) {
     const rows = (data.organizations || []).map((item) => `<tr data-search="${attr(`${item.name} ${item.email} ${item.contactPerson}`)}" data-type="${attr(item.type)}" data-status="${attr(item.accountStatus)}"><td><strong>${e(item.name)}</strong></td><td>${e(h(item.type))}</td><td>${e(item.contactPerson)}</td><td><span>${e(item.email)}</span><small>${e(item.phone)}</small></td><td>${e(item.address)}</td><td>${badge(item.accountStatus)}</td><td>${e(item.activeShipments)}</td><td>${date(item.createdAt)}</td><td>${actionsMenu([
       action("View details", "view-organization", item.organizationId), action("Edit", "edit-organization", item.organizationId), action("View users", "organization-users", item.organizationId), action("View shipments", "organization-shipments", item.organizationId), action(item.accountStatus === "active" ? "Suspend" : "Activate", "toggle-organization", item.organizationId, item.accountStatus === "active" ? "danger" : "")
-    ])}</td></tr>`).join("");
+    ], `organization:${item.organizationId}`)}</td></tr>`).join("");
     return tablePage(filters([searchFilter("Search organizations"), selectFilter("type", "Organization type", ORG_TYPES), selectFilter("status", "Account status", [["active", "Active"], ["suspended", "Suspended"]])]), ["Organization", "Type", "Contact", "Email / phone", "Address", "Status", "Active shipments", "Created", "Actions"], rows, "No organizations match these filters.");
   }
 
   function usersPage(data) {
     const organizations = (data.organizations || []).map((item) => [item.organizationId, item.name]);
-    const rows = (data.users || []).map((item) => `<tr data-search="${attr(`${item.name} ${item.username} ${item.email}`)}" data-role="${attr(item.role)}" data-organization="${attr(item.organizationId || "none")}" data-status="${attr(item.accountStatus)}"><td><strong>${e(item.name)}</strong><small>${e(item.email || "No email")}</small></td><td>${e(item.username)}</td><td>${badge(roleLabel(item.role), item.role)}</td><td>${e(item.organizationName || "Platform-wide")}</td><td>${badge(item.accountStatus)}</td><td>${date(item.lastActivity)}</td><td>${actionsMenu([action("View", "view-user", item.userId), action("Edit / assign", "edit-user", item.userId), action(item.accountStatus === "active" ? "Deactivate" : "Activate", "toggle-user", item.userId, item.accountStatus === "active" ? "danger" : "")])}</td></tr>`).join("");
+    const rows = (data.users || []).map((item) => `<tr data-search="${attr(`${item.name} ${item.username} ${item.email}`)}" data-role="${attr(item.role)}" data-organization="${attr(item.organizationId || "none")}" data-status="${attr(item.accountStatus)}"><td><strong>${e(item.name)}</strong><small>${e(item.email || "No email")}</small></td><td>${e(item.username)}</td><td>${badge(roleLabel(item.role), item.role)}</td><td>${e(item.organizationName || "Platform-wide")}</td><td>${badge(item.accountStatus)}</td><td>${date(item.lastActivity)}</td><td>${actionsMenu([action("View", "view-user", item.userId), action("Edit / assign", "edit-user", item.userId), action(item.accountStatus === "active" ? "Deactivate" : "Activate", "toggle-user", item.userId, item.accountStatus === "active" ? "danger" : "")], `user:${item.userId}`)}</td></tr>`).join("");
     return tablePage(filters([searchFilter("Search users"), selectFilter("role", "Role", ROLES), selectFilter("organization", "Organization", [["none", "Platform-wide"], ...organizations]), selectFilter("status", "Account status", [["active", "Active"], ["inactive", "Inactive"]])]), ["Name", "Username", "Role", "Organization", "Status", "Last activity", "Actions"], rows, "No users match these filters.");
   }
 
   function shipmentsPage(data) {
     const organizations = optionsFrom(data.organizations, "organizationId", "name");
     const categories = uniqueOptions(data.shipments, "product");
-    const rows = (data.shipments || []).map((item, index) => `<tr data-search="${attr(`${item.shipmentId} ${item.organizationName} ${item.product} ${item.driverName} ${item.origin} ${item.destinationHospitalName}`)}" data-organization="${attr(item.organizationId)}" data-risk="${attr(item.riskLevel)}" data-status="${attr(item.status)}" data-product="${attr(item.product)}"><td><strong>${e(item.shipmentId)}</strong></td><td>${e(item.organizationName)}</td><td>${e(item.product)}</td><td>${e(item.driverName)}</td><td><span>${e(item.origin)}</span><small>to ${e(item.destinationHospitalName)}</small></td><td>${temperature(item)}</td><td>${badge(item.riskLevel)}</td><td>${badge(item.status)}</td><td>${e(item.expectedArrival)}</td><td>${actionsMenu([action("View details", "view-shipment", index), action("View map", "map-shipment", index)])}</td></tr>`).join("");
+    const rows = (data.shipments || []).map((item, index) => `<tr data-search="${attr(`${item.shipmentId} ${item.organizationName} ${item.product} ${item.driverName} ${item.origin} ${item.destinationHospitalName}`)}" data-organization="${attr(item.organizationId)}" data-risk="${attr(item.riskLevel)}" data-status="${attr(item.status)}" data-product="${attr(item.product)}"><td><strong>${e(item.shipmentId)}</strong></td><td>${e(item.organizationName)}</td><td>${e(item.product)}</td><td>${e(item.driverName)}</td><td><span>${e(item.origin)}</span><small>to ${e(item.destinationHospitalName)}</small></td><td>${temperature(item)}</td><td>${badge(item.riskLevel)}</td><td>${badge(item.status)}</td><td>${e(item.expectedArrival)}</td><td>${actionsMenu([action("View details", "view-shipment", index), action("View map", "map-shipment", index)], `shipment:${item.shipmentId}`)}</td></tr>`).join("");
     return tablePage(filters([searchFilter("Search shipments"), selectFilter("organization", "Organization", organizations), selectFilter("risk", "Risk", [["low", "Safe"], ["high", "At risk"], ["critical", "Critical"]]), selectFilter("status", "Delivery status", [["__active_shipments", "Active shipments"], ...uniqueOptions(data.shipments, "status", true)]), selectFilter("product", "Product category", categories)]), ["Shipment", "Organization", "Product", "Driver", "Route", "Temperature", "Risk", "Delivery", "Expected arrival", "Actions"], rows, "No shipments match these filters.");
   }
 
   function devicesPage(data) {
     const organizations = optionsFrom(data.organizations, "organizationId", "name");
-    const rows = (data.devices || []).map((item) => `<tr data-search="${attr(`${item.sensorId} ${item.deviceType} ${item.organizationName} ${item.assignment}`)}" data-organization="${attr(item.organizationId || "none")}" data-connection="${attr(item.connectionStatus)}" data-battery="${attr(item.batteryCondition)}"><td><strong>${e(item.sensorId)}</strong></td><td>${e(item.deviceType)}</td><td>${e(item.organizationName || "Unassigned")}</td><td>${e(item.assignment)}</td><td>${badge(item.connectionStatus)}</td><td>${battery(item)}</td><td>${date(item.lastReadingTime)}</td><td>${badge(item.deviceStatus)}</td><td>${actionsMenu([action("View details", "view-device", item.sensorId), action("Edit assignment", "edit-device", item.sensorId), action(item.active ? "Deactivate" : "Activate", "toggle-device", item.sensorId, item.active ? "danger" : "")])}</td></tr>`).join("");
+    const rows = (data.devices || []).map((item) => `<tr data-search="${attr(`${item.sensorId} ${item.deviceType} ${item.organizationName} ${item.assignment}`)}" data-organization="${attr(item.organizationId || "none")}" data-connection="${attr(item.connectionStatus)}" data-battery="${attr(item.batteryCondition)}"><td><strong>${e(item.sensorId)}</strong></td><td>${e(item.deviceType)}</td><td>${e(item.organizationName || "Unassigned")}</td><td>${e(item.assignment)}</td><td>${badge(item.connectionStatus)}</td><td>${battery(item)}</td><td>${date(item.lastReadingTime)}</td><td>${badge(item.deviceStatus)}</td><td>${actionsMenu([action("View details", "view-device", item.sensorId), action("Edit assignment", "edit-device", item.sensorId), action(item.active ? "Deactivate" : "Activate", "toggle-device", item.sensorId, item.active ? "danger" : "")], `device:${item.sensorId}`)}</td></tr>`).join("");
     return tablePage(filters([searchFilter("Search devices"), selectFilter("organization", "Organization", [["none", "Unassigned"], ...organizations]), selectFilter("connection", "Connection", [["online", "Online"], ["offline", "Offline"]]), selectFilter("battery", "Battery", [["normal", "Normal"], ["low", "Low"], ["critical", "Critical"]])]), ["Sensor ID", "Type", "Organization", "Assignment", "Connection", "Battery", "Last reading", "Status", "Actions"], rows, "No devices match these filters.");
   }
 
   function alertsPage(data) {
     const organizations = optionsFrom(data.organizations, "organizationId", "name");
-    const rows = (data.alerts || []).map((item) => `<tr data-search="${attr(`${item.alertId} ${item.shipmentId} ${item.organizationName} ${item.type} ${item.explanation}`)}" data-severity="${attr(item.severity)}" data-organization="${attr(item.organizationId)}" data-status="${attr(item.status)}"><td>${badge(item.severity)}</td><td><strong>${e(item.shipmentId)}</strong></td><td>${e(item.organizationName)}</td><td>${e(h(item.type))}</td><td>${date(item.detectedAt)}</td><td class="admin-wide-cell"><strong>${e(item.explanation)}</strong><small>${e(item.recommendedAction)}</small></td><td>${badge(item.status)}</td><td>${e(item.driverResponse)}</td><td>${actionsMenu([action("View details", "view-alert", item.alertId), ...(item.status !== "acknowledged" ? [action("Acknowledge", "status-alert", item.alertId, "", "acknowledged")] : []), action("Escalate", "status-alert", item.alertId, "", "escalated"), action("Resolve", "status-alert", item.alertId, "", "resolved")])}</td></tr>`).join("");
+    const rows = (data.alerts || []).map((item) => `<tr data-search="${attr(`${item.alertId} ${item.shipmentId} ${item.organizationName} ${item.type} ${item.explanation}`)}" data-severity="${attr(item.severity)}" data-organization="${attr(item.organizationId)}" data-status="${attr(item.status)}"><td>${badge(item.severity)}</td><td><strong>${e(item.shipmentId)}</strong></td><td>${e(item.organizationName)}</td><td>${e(h(item.type))}</td><td>${date(item.detectedAt)}</td><td class="admin-wide-cell"><strong>${e(item.explanation)}</strong><small>${e(item.recommendedAction)}</small></td><td>${badge(item.status)}</td><td>${e(item.driverResponse)}</td><td>${actionsMenu([action("View details", "view-alert", item.alertId), ...(item.status !== "acknowledged" ? [action("Acknowledge", "status-alert", item.alertId, "", "acknowledged")] : []), action("Escalate", "status-alert", item.alertId, "", "escalated"), action("Resolve", "status-alert", item.alertId, "", "resolved")], `alert:${item.alertId}`)}</td></tr>`).join("");
     return tablePage(filters([searchFilter("Search alerts"), selectFilter("severity", "Severity", [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["critical", "Critical"]]), selectFilter("organization", "Organization", organizations), selectFilter("status", "Status", [["new", "New"], ["acknowledged", "Acknowledged"], ["action_taken", "Action Taken"], ["escalated", "Escalated"], ["resolved", "Resolved"]])]), ["Severity", "Shipment", "Organization", "Type", "Detected", "Explanation / action", "Status", "Driver response", "Actions"], rows, "No alerts match these filters.");
   }
 
   function ticketsPage(data) {
     const supportUsers = (data.users || []).filter((user) => user.role === "support");
-    const rows = (data.tickets || []).map((item) => `<tr data-search="${attr(`${item.ticketId} ${item.organizationName} ${item.reportingUser} ${item.shipmentId} ${item.assignedAgent}`)}" data-priority="${attr(item.priority)}" data-status="${attr(item.status)}" data-assigned="${attr(item.assignedTo || "unassigned")}"><td><strong>${e(item.ticketId)}</strong></td><td>${e(item.organizationName)}</td><td>${e(item.reportingUser)}</td><td>${e(item.shipmentId || "Not linked")}</td><td>${badge(item.priority)}</td><td>${e(item.assignedAgent)}</td><td>${badge(item.status)}</td><td>${date(item.createdAt)}</td><td>${actionsMenu([action("View details", "view-ticket", item.ticketId), action("Assign / prioritize", "edit-ticket", item.ticketId), action("Escalate", "status-ticket", item.ticketId, "", "escalated"), action("Close", "status-ticket", item.ticketId, "danger", "closed")])}</td></tr>`).join("");
+    const rows = (data.tickets || []).map((item) => `<tr data-search="${attr(`${item.ticketId} ${item.organizationName} ${item.reportingUser} ${item.shipmentId} ${item.assignedAgent}`)}" data-priority="${attr(item.priority)}" data-status="${attr(item.status)}" data-assigned="${attr(item.assignedTo || "unassigned")}"><td><strong>${e(item.ticketId)}</strong></td><td>${e(item.organizationName)}</td><td>${e(item.reportingUser)}</td><td>${e(item.shipmentId || "Not linked")}</td><td>${badge(item.priority)}</td><td>${e(item.assignedAgent)}</td><td>${badge(item.status)}</td><td>${date(item.createdAt)}</td><td>${actionsMenu([action("View details", "view-ticket", item.ticketId), action("Assign / prioritize", "edit-ticket", item.ticketId), action("Escalate", "status-ticket", item.ticketId, "", "escalated"), action("Close", "status-ticket", item.ticketId, "danger", "closed")], `ticket:${item.ticketId}`)}</td></tr>`).join("");
     return tablePage(filters([searchFilter("Search tickets"), selectFilter("priority", "Priority", [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["critical", "Critical"]]), selectFilter("status", "Status", [["__open_tickets", "Open tickets"], ["new", "New"], ["in_progress", "In progress"], ["waiting_for_response", "Waiting"], ["escalated", "Escalated"], ["resolved", "Resolved"], ["closed", "Closed"]]), selectFilter("assigned", "Assigned agent", [["unassigned", "Unassigned"], ...supportUsers.map((user) => [user.userId, user.name])])]), ["Ticket", "Organization", "Reporting user", "Shipment", "Priority", "Support agent", "Status", "Created", "Actions"], rows, "No tickets match these filters.");
   }
 
@@ -189,6 +236,16 @@
     const id = button.dataset.id;
     const value = button.dataset.value;
     const data = state.data;
+    if (actionName === "local-demo-retry") return actions.reloadLocalDemo(), true;
+    if (actionName === "local-demo-next") {
+      try {
+        await actions.advanceLocalDemo();
+        actions.notify("Demo shipment advanced through the real application path");
+      } catch (error) {
+        actions.notify(error.message, "error");
+      }
+      return true;
+    }
     if (actionName === "simulation-retry") return actions.reloadSimulation(), true;
     if (["simulation-pause", "simulation-resume", "simulation-stop", "simulation-reset"].includes(actionName)) {
       const verb = actionName.replace("simulation-", "");
@@ -440,7 +497,7 @@
   function uniqueOptions(items = [], key, human = false) { return [...new Set(items.map((item) => item[key]).filter(Boolean))].map((value) => [value, human ? h(value) : value]); }
   function primaryAction(label, actionName) { return `<button class="foundation-primary" data-admin-action="${actionName}" type="button">${e(label)}</button>`; }
   function action(label, name, id, tone = "", value = "") { return `<button class="${tone}" data-admin-action="${attr(name)}" data-id="${attr(id)}" ${value ? `data-value="${attr(value)}"` : ""} type="button">${e(label)}</button>`; }
-  function actionsMenu(items) { return `<details class="admin-row-actions"><summary>Actions</summary><div>${items.join("")}</div></details>`; }
+  function actionsMenu(items, key) { return `<details class="admin-row-actions" data-ui-state-key="admin-actions:${attr(key)}"><summary>Actions</summary><div>${items.join("")}</div></details>`; }
   function formFooter(label) { return `<p class="admin-form-feedback" role="status"></p><div class="form-actions"><button class="foundation-primary" type="submit">${e(label)}</button></div>`; }
   function dashboardPanel(eyebrow, title, page, content, className = "") { return `<section class="foundation-panel ${className}"><header><div><span class="foundation-eyebrow">${e(eyebrow)}</span><h2>${e(title)}</h2></div><button class="admin-section-link" data-role-page="${attr(page)}" type="button">View all</button></header>${content}</section>`; }
   function summaryMetric(label, value, tone = "") { return `<span>${e(label)}</span><strong class="${tone}">${e(value ?? 0)}</strong>`; }

@@ -11,13 +11,29 @@ From the repository root, use Python 3.12 when available:
 python -m pip install -r SD/backend/requirements.txt
 $env:VITAE_REPOSITORY_MODE="memory"
 $env:VITAE_DEVICE_INGEST_TOKEN=[guid]::NewGuid().ToString("N")
-python SD/backend/app.py
+$env:VITAE_LOCAL_DEMO_CONTROLS="true"
+$env:VITAE_TEMPORAL_RISK_MODE="artifact"
+$env:VITAE_TEMPORAL_RISK_ARTIFACT_DIR=(Resolve-Path "tmp/demo-ml-artifact").Path
+$env:VITAE_TEMPORAL_RISK_MANIFEST_SHA256="6a9e1fce6281a3ad55b13f1e811c7e55b043a42668632be23cc8c6d9399275f2"
+$env:VITAE_JOURNEY_RISK_MODE="disabled"
+$env:PORT="8012"
+python -m SD.backend.app
 ```
 
-Open `http://127.0.0.1:8000`. The backend serves the frontend; there is no
+The trusted local artifact directory must already contain the reviewed model,
+calibrator, and matching inference manifest. Open `http://127.0.0.1:8012`. The
+backend serves the frontend; there is no
 separate frontend command. Sign in as the checked-in local demo Organization
 user `organization` with password `organization123`. These credentials and the
 device token are local demo values only.
+
+For the continuous state demonstration, sign in first as local Admin user
+`admin` with password `admin123`, open **Demo Flow**, and use **Next state**.
+The opt-in control advances only the dedicated in-memory shipment and
+submits every reading through the same validation, persistence, decision, and
+alert services used by the normal API. It refuses to start in DynamoDB mode.
+After each step, switch to the Organization or Driver view to show the normal
+dashboard projection; no DOM state is forced by the demo control.
 
 Optional journey forecasting requires a previously generated, trusted local
 artifact and its manifest hash. Do not train during the presentation. Configure
@@ -76,8 +92,28 @@ known.
 The useful ML moment is a SAFE or MONITOR current condition paired with elevated
 future journey risk. Never force this result with a special demo override. Use
 only a reviewed deterministic simulator trajectory and the real inference path.
-`python SD/backend/simulator.py` is a separate terminal-only deterministic
-preview; it does not inject readings into the running dashboard process.
+The **Demo Flow** control is the supported local continuous runner. The standalone
+`python SD/backend/simulator.py` command remains a terminal-only deterministic
+preview and does not inject readings into the running dashboard process.
+
+### Reviewed ML causality example
+
+The primary ML evidence is built into the opt-in local Demo Flow. It starts with
+a `6.0 C` reading, then submits twelve `8.1 C` readings at 105-minute intervals
+through normal ingestion. On the eleventh excursion reading ProductRules remains `MONITOR`, the
+predicted 30-minute adverse-event probability is `22.4982%`, and the action is
+`MONITOR`. The twelfth reading leaves ProductRules at `MONITOR`, raises the
+probability to `50.1960%`, and the existing `0.50` engineering threshold changes
+the action to `INTERVENE`. The Admin view retains both authoritative snapshots
+side by side. All samples use `source=SIMULATOR` and the normal authenticated
+ingestion, persistence, inference, and decision paths.
+
+This is simulator-only engineering evidence, not an approved customer risk
+policy. The full severity-ladder recovery can produce approximately `99.99%`
+because elapsed time, observation span, and cumulative excursion duration lie
+far beyond the artifact's learned safe/monitor prefixes. Keep that saturation
+case in technical Q&A rather than presenting it as real-world probability
+accuracy.
 
 ## Talking Points
 

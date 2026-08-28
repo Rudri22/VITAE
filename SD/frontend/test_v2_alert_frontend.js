@@ -137,7 +137,10 @@ async function clientContract() {
 async function roleContract() {
   const orgHtml = window.VitaeOrganization.render(organizationState(), "alerts");
   assert.match(orgHtml, /Authoritative V2 alert/);
-  assert.match(orgHtml, /Product condition at detection/);
+  assert.match(orgHtml, /What happened/);
+  assert.match(orgHtml, /Recommended action/);
+  assert.match(orgHtml, /Supporting evidence/);
+  assert.match(orgHtml, /Condition at detection/);
   assert.match(orgHtml, /MONITOR/);
   assert.match(orgHtml, /v2-alert-ack/);
   assert.match(orgHtml, /v2-alert-resolve/);
@@ -146,12 +149,35 @@ async function roleContract() {
 
   const driverHtml = window.VitaeDriver.render(driverState(), "alerts");
   assert.match(driverHtml, /Authoritative V2 alert/);
-  assert.match(driverHtml, /Product condition at detection/);
+  assert.match(driverHtml, /What happened/);
+  assert.match(driverHtml, /Recommended action/);
+  assert.match(driverHtml, /Supporting evidence/);
+  assert.match(driverHtml, /Condition at detection/);
   assert.match(driverHtml, /v2-alert-ack/);
   assert.match(driverHtml, /v2-alert-action/);
   assert.doesNotMatch(driverHtml, /v2-alert-resolve/);
   assert.doesNotMatch(driverHtml, /mapped legacy alert must be hidden/);
   assert.match(driverHtml, /legacy-only alert remains/);
+
+  const driverHomeState = driverState();
+  driverHomeState.data.activeDelivery = {
+    ...mappedShipment,
+    conditionStatus: "RULE_VIOLATION",
+    temperature: 9,
+  };
+  driverHomeState.v2Alerts.alerts[0] = {
+    ...v2Alert,
+    severity: "CRITICAL",
+    sourceStatus: "RULE_VIOLATION",
+    message: "Excursion limit reached",
+    recommendedAction: "Stop transport and replace the affected shipment",
+  };
+  const driverHomeHtml = window.VitaeDriver.render(driverHomeState, "home");
+  assert.match(driverHomeHtml, /Current condition/);
+  assert.match(driverHomeHtml, /RULE_VIOLATION/);
+  assert.match(driverHomeHtml, /Excursion limit reached/);
+  assert.match(driverHomeHtml, /Required action/);
+  assert.match(driverHomeHtml, /Stop transport and replace the affected shipment/);
 
   const commands = [];
   const actions = {

@@ -17,7 +17,7 @@
   }
 
   function pageContent(page, state, local) {
-    if (page === "home") return home(state.data, local);
+    if (page === "home") return home(state, local);
     if (page === "deliveries") return deliveriesPage(state.data, local);
     if (page === "trip") return activeTripPage(state.data, local);
     if (page === "alerts") return alertsPage(state);
@@ -25,17 +25,27 @@
     return profilePage(state.data);
   }
 
-  function home(data, local) {
+  function home(state, local) {
+    const data = state.data || {};
     const focus = data.activeDelivery || (data.acceptedDeliveries || [])[0], active = Boolean(data.activeDelivery);
+    const currentAlert = focus
+      ? (state.v2Alerts?.alerts || []).find((alert) => alert.shipmentId === focus.shipmentId && alert.status !== "RESOLVED")
+      : null;
     return `${local.completionSuccess ? `<div class="driver-success" role="status"><strong>Delivery submitted successfully</strong><span>${esc(local.completionSuccess)} is awaiting organization verification.</span></div>` : ""}
       <section class="driver-request-section"><header><div><span class="foundation-eyebrow">Available to you</span><h2>Delivery Requests</h2></div><span>${(data.deliveryRequests || []).length} new</span></header>${requestCards(data.deliveryRequests || [], 3)}</section>
-      ${focus ? focusCard(focus, active) : `<section class="driver-calm-state"><span aria-hidden="true">✓</span><strong>No accepted trip right now</strong><p>Open a delivery request above to accept your next trip.</p></section>`}
+      ${focus ? focusCard(focus, active, currentAlert) : `<section class="driver-calm-state"><span aria-hidden="true">✓</span><strong>No accepted trip right now</strong><p>Open a delivery request above to accept your next trip.</p></section>`}
       <section class="driver-section driver-home-section"><header><h2>Recent Trips</h2><button data-driver-action="history" type="button">View history</button></header>${tripHistory(data.completedDeliveries || [], 3)}</section>`;
   }
 
-  function focusCard(item, active) {
+  function focusCard(item, active, currentAlert = null) {
     const progress = Math.max(0, Math.min(100, Number(item.routeProgress || 0)));
-    return `<section class="driver-focus-card ${item.riskLevel === "critical" ? "critical" : item.riskLevel === "high" ? "warning" : ""}"><header><div><span>${active ? "On the way" : "Accepted delivery"}</span><strong>${esc(item.shipmentId)}</strong></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.status)}${v2Lifecycle(item)}</div></header><small>${esc(item.productCategory)}</small><h2>${esc(item.destination)}</h2><p>${esc(item.pickup)} <b aria-hidden="true">→</b> ${esc(item.destination)}</p><div class="driver-focus-facts"><div><span>${active ? "ETA" : "Pickup by"}</span><strong>${shortDate(active ? item.deadline : item.departureAt)}</strong></div><div><span>Container</span><strong>${temperature(item.temperature)}</strong></div></div><div class="driver-progress" aria-label="Route progress ${progress}%"><span style="width:${progress}%"></span></div><button class="driver-primary-action" data-driver-action="${active ? "open-trip" : "delivery-detail"}" data-id="${esc(item.shipmentId)}" type="button">${active ? "Open Active Trip" : "Prepare for Pickup"}</button></section>`;
+    const condition = item.conditionStatus;
+    const critical = ["CRITICAL", "RULE_VIOLATION"].includes(condition);
+    const warning = ["MONITOR", "AT_RISK"].includes(condition);
+    const conditionPanel = condition
+      ? `<div class="driver-condition-action ${critical ? "critical" : warning ? "warning" : "safe"}"><div><span>Current condition</span>${window.VitaeUI.badge(condition)}</div>${currentAlert ? `<p>${esc(currentAlert.message)}</p><small>Required action</small><strong>${esc(currentAlert.recommendedAction)}</strong>` : `<p>Verified from the latest accepted telemetry.</p>`}</div>`
+      : "";
+    return `<section class="driver-focus-card ${critical ? "critical" : warning ? "warning" : ""}"><header><div><span>${active ? "On the way" : "Accepted delivery"}</span><strong>${esc(item.shipmentId)}</strong></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.status)}${v2Lifecycle(item)}</div></header><small>${esc(item.productCategory)}</small><h2>${esc(item.destination)}</h2><p>${esc(item.pickup)} <b aria-hidden="true">→</b> ${esc(item.destination)}</p>${conditionPanel}<div class="driver-focus-facts"><div><span>${active ? "ETA" : "Pickup by"}</span><strong>${shortDate(active ? item.deadline : item.departureAt)}</strong></div><div><span>Container</span><strong>${temperature(item.temperature)}</strong></div></div><div class="driver-progress" aria-label="Route progress ${progress}%"><span style="width:${progress}%"></span></div><button class="driver-primary-action" data-driver-action="${active ? "open-trip" : "delivery-detail"}" data-id="${esc(item.shipmentId)}" type="button">${active ? "Review Active Trip" : "Prepare for Pickup"}</button></section>`;
   }
 
   function requestCards(items, limit) {
@@ -73,7 +83,7 @@
     const item = (data.activeDeliveries || []).find((delivery) => delivery.shipmentId === local.activeShipmentId) || data.activeDelivery;
     if (!item) return local.completionSuccess ? `<div class="driver-success"><strong>Delivery complete</strong><span>${esc(local.completionSuccess)} is awaiting verification.</span><button data-role-page="deliveries" type="button">View deliveries</button></div>` : empty("No delivery is currently active.");
     return `<section class="driver-trip-card"><header><div><span>Destination</span><h2>${esc(item.destination)}</h2><small>${esc(item.shipmentId)} · ${esc(item.productCategory)}</small></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.status)}${v2Lifecycle(item)}</div></header><div class="driver-route-summary"><span>${esc(item.pickup)}</span><i></i><strong>${esc(item.destination)}</strong></div><div class="driver-trip-facts"><article><span>ETA</span><strong>${shortDate(item.deadline)}</strong></article><article><span>Temperature</span><strong>${temperature(item.temperature)}</strong><small>Required ${range(item)}</small></article></div><div class="driver-main-instruction"><span>Main instruction</span><strong>${esc(item.specialHandlingInstructions)}</strong></div><button class="driver-route-action" data-driver-action="route" data-id="${esc(item.shipmentId)}" type="button">Open Route</button>${local.completionOpen ? completionForm(item) : `<button class="driver-primary-action" data-driver-action="completion-open" type="button">Confirm Arrival</button>`}</section>
-      <details class="driver-secondary-panel" ${local.incidentOpen ? "open" : ""}><summary>Report an incident</summary>${incidentForm(item, local)}</details>`;
+      <details class="driver-secondary-panel" data-ui-state-key="driver-incident:${esc(item.shipmentId)}" ${local.incidentOpen ? "open" : ""}><summary>Report an incident</summary>${incidentForm(item, local)}</details>`;
   }
 
   function completionForm(item) {
@@ -97,20 +107,20 @@
       (alert) => !mappedShipmentIds.has(alert.shipmentId),
     );
     const v2 = state.v2Alerts || { status: "idle", alerts: [] };
-    return `${driverV2Alerts(v2)}<section class="driver-section"><header><div><span class="foundation-eyebrow">Legacy shipments</span><h2>Legacy Alerts</h2></div></header><div class="driver-action-alerts">${legacyAlerts.length ? legacyAlerts.map((item) => `<article class="${item.severity === "critical" ? "critical" : "warning"}"><header><div><span>${human(item.type)}</span><strong>${esc(item.shipmentId)}</strong></div>${window.VitaeUI.badge(item.severity)}</header><p><strong>${esc(item.message)}</strong> ${esc(item.instruction)}</p><small>Updated ${shortDate(item.updatedAt)}</small><button class="driver-alert-primary" data-driver-action="alert-response" data-response="action_completed" data-id="${esc(item.alertId)}" type="button">Action Completed</button><details><summary>More actions</summary><div><button data-driver-action="alert-response" data-response="problem_continues" data-id="${esc(item.alertId)}" type="button">Problem Continues</button><button data-driver-action="alert-response" data-response="contact_organization" data-contact="${esc(contact)}" data-id="${esc(item.alertId)}" type="button">Contact Organization</button><button data-driver-action="alert-support" data-shipment="${esc(item.shipmentId)}" type="button">Request Support</button><button data-driver-action="alert-sensor" data-id="${esc(item.alertId)}" data-shipment="${esc(item.shipmentId)}" type="button">Report Sensor Issue</button></div></details></article>`).join("") : empty("No legacy alerts require action.")}</div></section>`;
+    return `${driverV2Alerts(v2)}<section class="driver-section"><header><div><span class="foundation-eyebrow">Legacy shipments</span><h2>Legacy Alerts</h2></div></header><div class="driver-action-alerts">${legacyAlerts.length ? legacyAlerts.map((item) => `<article class="${item.severity === "critical" ? "critical" : "warning"}"><header><div><span>${human(item.type)}</span><strong>${esc(item.shipmentId)}</strong></div>${window.VitaeUI.badge(item.severity)}</header><p><strong>${esc(item.message)}</strong> ${esc(item.instruction)}</p><small>Updated ${shortDate(item.updatedAt)}</small><button class="driver-alert-primary" data-driver-action="alert-response" data-response="action_completed" data-id="${esc(item.alertId)}" type="button">Action Completed</button><details data-ui-state-key="driver-legacy-alert:${esc(item.alertId)}"><summary>More actions</summary><div><button data-driver-action="alert-response" data-response="problem_continues" data-id="${esc(item.alertId)}" type="button">Problem Continues</button><button data-driver-action="alert-response" data-response="contact_organization" data-contact="${esc(contact)}" data-id="${esc(item.alertId)}" type="button">Contact Organization</button><button data-driver-action="alert-support" data-shipment="${esc(item.shipmentId)}" type="button">Request Support</button><button data-driver-action="alert-sensor" data-id="${esc(item.alertId)}" data-shipment="${esc(item.shipmentId)}" type="button">Report Sensor Issue</button></div></details></article>`).join("") : empty("No legacy alerts require action.")}</div></section>`;
   }
 
   function driverV2Alerts(v2) {
     let content;
-    if (v2.status === "error") content = `<p role="alert">${esc(v2.error || "V2 alerts are unavailable.")}</p>`;
-    else if (v2.status === "loading" || v2.status === "idle") content = empty("Loading V2 alerts.");
-    else content = v2.alerts.length ? v2.alerts.map(driverV2AlertCard).join("") : empty("No V2 alert history for assigned shipments.");
-    return `<section class="driver-section"><header><div><span class="foundation-eyebrow">Deterministic pipeline</span><h2>V2 Alerts</h2></div></header><div class="driver-action-alerts">${content}</div></section>`;
+    if (v2.status === "error") content = `<p role="alert">${esc(v2.error || "Verified alerts are unavailable.")}</p>`;
+    else if (v2.status === "loading" || v2.status === "idle") content = empty("Loading verified alerts.");
+    else content = v2.alerts.length ? v2.alerts.map(driverV2AlertCard).join("") : empty("No verified alert history for assigned shipments.");
+    return `<section class="driver-section"><header><div><span class="foundation-eyebrow">Verified monitoring</span><h2>Cold-chain alerts</h2></div></header><div class="driver-action-alerts">${content}</div></section>`;
   }
 
   function driverV2AlertCard(item) {
     const resolved = item.status === "RESOLVED";
-    return `<article class="${item.severity === "CRITICAL" ? "critical" : "warning"}" data-v2-alert-id="${esc(item.alertId)}"><header><div><span>${human(item.alertType)}</span><strong>${esc(item.shipmentId)}</strong></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.severity)}${window.VitaeUI.badge(item.status)}</div></header><p><strong>${esc(item.message)}</strong> ${esc(item.recommendedAction)}</p><dl>${detail("Product condition at detection", human(item.sourceStatus))}${detail("Last update", shortDate(item.updatedAt))}${detail("Recorded actions", String(item.actions?.length || 0))}</dl>${resolved ? `<small>Resolved by Organization · retained in history</small>` : `${item.status === "OPEN" ? `<button class="driver-alert-primary" data-driver-action="v2-alert-ack" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}" type="button">Acknowledge</button>` : ""}<details><summary>Record action</summary><form class="v2-alert-command-form" data-driver-form="v2-alert-action" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Action taken</span><input name="description" required maxlength="300"></label><button type="submit">Save action</button></form></details>`}</article>`;
+    return `<article class="${item.severity === "CRITICAL" ? "critical" : "warning"}" data-v2-alert-id="${esc(item.alertId)}"><header><div><span>${human(item.alertType)}</span><strong>${esc(item.shipmentId)}</strong></div><div class="vitae-status-stack">${window.VitaeUI.badge(item.severity)}${window.VitaeUI.badge(item.status)}</div></header><div class="org-alert-priority"><section><span>What happened</span><strong>${esc(item.message)}</strong></section><section><span>Recommended action</span><strong>${esc(item.recommendedAction)}</strong></section></div><dl class="org-alert-ownership">${detail("Current ownership", "Assigned driver")}${detail("Recorded actions", String(item.actions?.length || 0))}${detail("Last update", shortDate(item.updatedAt))}</dl><details data-ui-state-key="driver-v2-alert-evidence:${esc(item.alertId)}"><summary>Supporting evidence</summary><dl>${detail("Condition at detection", human(item.sourceStatus))}${detail("Reason", human(item.reasonCode))}${detail("Alert ID", item.alertId)}</dl></details>${resolved ? `<small>Resolved by Organization · retained in history</small>` : `${item.status === "OPEN" ? `<button class="driver-alert-primary" data-driver-action="v2-alert-ack" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}" type="button">Acknowledge</button>` : ""}<details data-ui-state-key="driver-v2-alert:${esc(item.alertId)}"><summary>Record action</summary><form class="v2-alert-command-form" data-driver-form="v2-alert-action" data-lot-trip-id="${esc(item.lotTripId)}" data-id="${esc(item.alertId)}"><label><span>Action taken</span><input name="description" required maxlength="300"></label><button type="submit">Save action</button></form></details>`}</article>`;
   }
 
   function supportPage(data, local) {
@@ -118,7 +128,7 @@
   }
 
   function ticketCard(ticket) {
-    return `<details><summary><span><strong>${esc(ticket.subject)}</strong><small>${esc(ticket.ticketId)} · ${shortDate(ticket.updatedAt)}</small></span>${window.VitaeUI.badge(ticket.status)}</summary><p>${esc(ticket.summary)}</p><div class="driver-support-messages">${(ticket.messages || []).map((message) => `<article><strong>${esc(message.author)}</strong><small>${shortDate(message.timestamp)}</small><p>${esc(message.body)}</p></article>`).join("") || `<p>No public response yet.</p>`}</div></details>`;
+    return `<details data-ui-state-key="driver-support-ticket:${esc(ticket.ticketId)}"><summary><span><strong>${esc(ticket.subject)}</strong><small>${esc(ticket.ticketId)} · ${shortDate(ticket.updatedAt)}</small></span>${window.VitaeUI.badge(ticket.status)}</summary><p>${esc(ticket.summary)}</p><div class="driver-support-messages">${(ticket.messages || []).map((message) => `<article><strong>${esc(message.author)}</strong><small>${shortDate(message.timestamp)}</small><p>${esc(message.body)}</p></article>`).join("") || `<p>No public response yet.</p>`}</div></details>`;
   }
 
   function profilePage(data) {
@@ -145,7 +155,7 @@
     if (action === "alert-support") { local.supportShipmentId = button.dataset.shipment; local.supportIssueType = "temperature_alert"; state.page = "support"; actions.render(); return true; }
     if (action === "alert-sensor") return perform(async () => { await api(`/api/driver/alerts/${id}`, "PATCH", { action: "sensor_issue" }); local.incidentOpen = true; local.incidentCategory = "sensor_problem"; state.page = "trip"; await actions.reload(); actions.notify("Sensor issue recorded. Add incident details below."); }, actions);
     if (action === "alert-response") return perform(async () => { await api(`/api/driver/alerts/${id}`, "PATCH", { action: button.dataset.response }); await actions.reload(); actions.notify("Alert response recorded."); if (button.dataset.response === "contact_organization" && button.dataset.contact) window.location.href = `mailto:${button.dataset.contact}`; }, actions);
-    if (action === "v2-alert-ack") return perform(async () => { await actions.v2AlertCommand(button.dataset.lotTripId, id, "acknowledge"); actions.notify("V2 alert acknowledged."); }, actions);
+    if (action === "v2-alert-ack") return perform(async () => { await actions.v2AlertCommand(button.dataset.lotTripId, id, "acknowledge"); actions.notify("Alert acknowledged."); }, actions);
     return true;
   }
 
@@ -157,7 +167,7 @@
     if (form.dataset.driverForm === "complete") { const payload = Object.fromEntries(new FormData(form).entries()); payload.confirmedArrival = payload.confirmedArrival === "true"; if (!payload.receiverSignature) { actions.notify("Ask the receiver to sign inside the signature box.", "error"); return true; } if (!confirm("Confirm this destination handoff and submit it for organization review?")) return true; return perform(async () => { await api(`/api/driver/shipments/${form.dataset.id}/complete`, "PATCH", payload); local.completionOpen = false; local.completionSuccess = form.dataset.id; local.activeShipmentId = null; state.page = "home"; await actions.reload(); actions.notify("Destination handoff confirmed successfully."); }, actions); }
     if (form.dataset.driverForm === "incident") return perform(async () => { await api("/api/driver/incidents", "POST", Object.fromEntries(new FormData(form).entries())); local.incidentOpen = false; local.incidentCategory = ""; form.reset(); await actions.reload(); actions.notify("Incident reported to operations."); }, actions);
     if (form.dataset.driverForm === "support") return perform(async () => { await api("/api/driver/support", "POST", Object.fromEntries(new FormData(form).entries())); local.supportShipmentId = ""; local.supportIssueType = ""; form.reset(); await actions.reload(); actions.notify("Help request sent to Support."); }, actions);
-    if (form.dataset.driverForm === "v2-alert-action") { const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "action", payload); actions.notify("V2 alert action recorded."); }, actions); }
+    if (form.dataset.driverForm === "v2-alert-action") { const payload = Object.fromEntries(new FormData(form).entries()); return perform(async () => { await actions.v2AlertCommand(form.dataset.lotTripId, form.dataset.id, "action", payload); actions.notify("Alert action recorded."); }, actions); }
     return false;
   }
 
@@ -175,8 +185,8 @@
   function compactAlerts(items, limit) { return items.length ? `<div class="driver-alert-preview">${items.slice(0, limit).map((item) => `<button data-role-page="alerts" type="button"><span><strong>${esc(item.message)}</strong><small>${esc(item.shipmentId)}</small></span>${window.VitaeUI.badge(item.severity)}</button>`).join("")}</div>` : empty("No important alerts."); }
   function tripHistory(items, limit) { return items.length ? `<div class="driver-trip-history">${items.slice(0, limit).map((item) => `<button data-driver-action="delivery-detail" data-id="${esc(item.shipmentId)}" type="button"><span class="driver-history-mark" aria-hidden="true">✓</span><span><strong>${esc(item.destination)}</strong><small>${esc(item.shipmentId)} · ${shortDate(item.arrivalTime || item.deadline)}</small></span>${window.VitaeUI.badge(item.status)}</button>`).join("")}</div>` : empty("No completed trips yet."); }
   function tripRecord(item) { return `<section class="driver-trip-record"><h3>Trip record</h3><dl>${detail("Accepted", shortDate(item.acceptedAt))}${detail("Arrival", shortDate(item.arrivalTime))}${detail("Receiver", item.receiverName || "Not recorded")}${detail("Signature", item.receiverSignature ? "Captured" : "Not provided")}${detail("Delivery notes", item.deliveryNotes || "No notes")}${detail("Final status", human(item.status))}</dl></section>`; }
-  function v2Lifecycle(item) { return item?.lotTripId && item?.tripStatus ? `<span class="vitae-v2-lifecycle"><span>V2 trip</span>${window.VitaeUI.badge(item.tripStatus)}</span>` : ""; }
-  function v2Details(item) { return item?.lotTripId ? `${detail("V2 trip lifecycle", human(item.tripStatus))}${detail("Lot trip ID", item.lotTripId)}` : ""; }
+  function v2Lifecycle(item) { return item?.lotTripId && item?.tripStatus ? `<span class="vitae-v2-lifecycle"><span>Trip</span>${window.VitaeUI.badge(item.tripStatus)}</span>` : ""; }
+  function v2Details(item) { return item?.lotTripId ? `${detail("Trip lifecycle", human(item.tripStatus))}${detail("Lot trip ID", item.lotTripId)}` : ""; }
   function allDeliveries(data) { return [...(data.deliveryRequests || []), ...(data.acceptedDeliveries || []), ...(data.activeDeliveries || []), ...(data.completedDeliveries || [])]; }
   function detail(label, value) { return `<div><dt>${esc(label)}</dt><dd>${esc(value || "Not available")}</dd></div>`; }
   function recordOptions(items, key, label, selected = "") { return items.map((item) => `<option value="${esc(item[key])}" ${String(item[key]) === String(selected) ? "selected" : ""}>${esc(item[label])}</option>`).join(""); }

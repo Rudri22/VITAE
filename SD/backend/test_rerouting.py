@@ -10,6 +10,7 @@ try:
         ReroutingStatus,
         RouteCandidate,
         RouteOptions,
+        rerouting_evaluation_document,
     )
     from .route_duration import RouteEvidence, RouteStatus
 except ImportError:
@@ -21,6 +22,7 @@ except ImportError:
         ReroutingStatus,
         RouteCandidate,
         RouteOptions,
+        rerouting_evaluation_document,
     )
     from route_duration import RouteEvidence, RouteStatus
 
@@ -82,10 +84,18 @@ class ReroutingEvaluatorTests(unittest.TestCase):
         self.assertEqual(result.comparison_metric, "ROUTE_DURATION_MINUTES")
 
     def test_eta_improvement_below_threshold_does_not_reroute(self):
+        alternative = candidate("candidate", eta=36)
         result = self.evaluator.evaluate(
-            RouteOptions(candidate("current", eta=40), (candidate("candidate", eta=36),))
+            RouteOptions(candidate("current", eta=40), (alternative,))
         )
         self.assertEqual(result.status, ReroutingStatus.NO_BETTER_ALTERNATIVE)
+        self.assertEqual(result.evaluated_candidates, (alternative,))
+        self.assertEqual(result.minimum_required_improvement, 5.0)
+        document = rerouting_evaluation_document(result)
+        self.assertEqual(document["evaluatedCandidates"][0]["facilityId"], "candidate")
+        self.assertEqual(
+            document["decisionFactors"]["minimumRequiredImprovement"], 5.0
+        )
 
     def test_missing_route_duration_and_distance_is_insufficient(self):
         current = candidate("current", eta=None, distance=None)

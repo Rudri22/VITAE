@@ -289,6 +289,31 @@ class V2SensorDataRouteTests(unittest.TestCase):
         self.assertEqual(alerts["count"], 1)
         self.assertEqual(alerts["alerts"][0]["alertType"], "EXCURSION_MONITOR")
 
+    def test_organization_summary_counts_authoritative_at_risk_state(self):
+        for sample_id, timestamp, temperature in (
+            ("summary-safe", "2026-08-19T18:00:00Z", 6.0),
+            ("summary-monitor", "2026-08-19T18:10:00Z", 9.0),
+            ("summary-at-risk", "2026-08-21T06:10:00Z", 9.0),
+        ):
+            status, _ = self.post(
+                {
+                    "sample_id": sample_id,
+                    "device_id": "device-sim-001",
+                    "timestamp": timestamp,
+                    "temperature": temperature,
+                }
+            )
+            self.assertEqual(status, 200)
+
+        dashboard_status, dashboard = self.get_path("/api/organization/dashboard")
+        self.assertEqual(dashboard_status, 200)
+        shipment = next(
+            item for item in dashboard["shipments"]
+            if item["shipmentId"] == "ship-a-v2-001"
+        )
+        self.assertEqual(shipment["conditionStatus"], "AT_RISK")
+        self.assertEqual(dashboard["summary"]["atRiskShipments"], 1)
+
     def test_organization_shipment_reads_use_authoritative_v2_telemetry(self):
         dashboard_status, before = self.get_path("/api/organization/dashboard")
         self.assertEqual(dashboard_status, 200)
@@ -382,6 +407,11 @@ class V2SensorDataRouteTests(unittest.TestCase):
                 )
                 self.assertEqual(item["temperature"], 6.0)
                 self.assertEqual(item["batteryLevel"], 84.0)
+                self.assertEqual(item["conditionStatus"], "SAFE")
+                self.assertEqual(
+                    item["conditionReasonCode"],
+                    "TEMPERATURE_WITHIN_NORMAL_RANGE",
+                )
                 self.assertEqual(
                     item["lastUpdated"], "2026-08-19T18:00:00+00:00"
                 )

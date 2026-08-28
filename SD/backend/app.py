@@ -149,6 +149,12 @@ try:
         serialize_future_risk,
         serialize_journey_risk,
     )
+    from .local_demo_sequence import (
+        LOCAL_DEMO_CONTROLS_ENV,
+        LocalDemoSequence,
+        LocalDemoSequenceError,
+        local_demo_step_result_document,
+    )
     from .facility_capabilities import ApplicationFacilityCapabilityRegistry
     from .operational_decision import (
         OperationalDecisionConfig,
@@ -206,6 +212,12 @@ except ImportError:
         MonitoringService,
         serialize_future_risk,
         serialize_journey_risk,
+    )
+    from local_demo_sequence import (
+        LOCAL_DEMO_CONTROLS_ENV,
+        LocalDemoSequence,
+        LocalDemoSequenceError,
+        local_demo_step_result_document,
     )
     from facility_capabilities import ApplicationFacilityCapabilityRegistry
     from operational_decision import (
@@ -371,6 +383,59 @@ V2_SHIPMENT_LIFECYCLE_SERVICE = V2ShipmentLifecycleService(
 V2_PRODUCT_CATALOG_SERVICE = ProductCatalogService()
 
 
+def _local_demo_controls_enabled():
+    raw = str(os.environ.get(LOCAL_DEMO_CONTROLS_ENV, "false")).strip().lower()
+    if raw not in {"true", "false"}:
+        raise RuntimeError(f"{LOCAL_DEMO_CONTROLS_ENV} must be true or false")
+    enabled = raw == "true"
+    if enabled and V2_REPOSITORY_CONFIG.mode.value != "memory":
+        raise RuntimeError("Local demo controls require the memory repository mode")
+    return enabled
+
+
+V2_LOCAL_DEMO_CONTROLS_ENABLED = _local_demo_controls_enabled()
+
+
+def _complete_local_demo_shipment():
+    shipment = SHIPMENTS["ship-a-v2-001"]
+    return complete_driver_delivery(
+        "driver-aya",
+        shipment["shipmentId"],
+        {
+            "confirmedArrival": True,
+            "receiverName": "Demo Receiving Desk",
+            "receiverSignature": "data:image/png;base64,AA==",
+            "destinationVerificationCode": shipment["destinationVerificationCode"],
+            "deliveryNotes": "Controlled local demonstration handoff",
+        },
+        {
+            "userId": "driver-aya-user",
+            "name": "Aya Mansour",
+        },
+        V2_SHIPMENT_LIFECYCLE_SERVICE,
+    )
+
+
+V2_LOCAL_DEMO_SEQUENCE = (
+    LocalDemoSequence(
+        V2_TELEMETRY_HTTP_ADAPTER,
+        V2_MONITORING_SERVICE,
+        V2_ALERT_LIFECYCLE_SERVICE,
+        AlertActor(
+            actor_id="organization-operations-user",
+            role=AlertActorRole.ORGANIZATION,
+            organization_id="hospital-a",
+        ),
+        lot_trip_id=V2_PROTOTYPE_TRIP.lot_trip_id,
+        device_id=V2_PROTOTYPE_TRIP.device_id,
+        trip_started_at=V2_PROTOTYPE_TRIP.start_time,
+        complete_shipment=_complete_local_demo_shipment,
+    )
+    if V2_LOCAL_DEMO_CONTROLS_ENABLED
+    else None
+)
+
+
 class ApiHandler(BaseHTTPRequestHandler):
     """HTTP API layer.
 
@@ -403,6 +468,10 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/admin/settings":
             self.handle_admin_update(update_platform_settings, "settings")
+            return
+
+        if path == "/api/admin/local-demo/next":
+            self.handle_local_demo_next()
             return
 
         if path == "/api/sensor-data":
@@ -609,9 +678,14 @@ class ApiHandler(BaseHTTPRequestHandler):
             user = self.require_admin_user()
             if not user:
                 return
-            self.send_json(
-                get_admin_foundation_dashboard_data(V2_STATE_REPOSITORY)
-            )
+            self.send_json({
+                **get_admin_foundation_dashboard_data(V2_STATE_REPOSITORY),
+                "localDemoControlsEnabled": V2_LOCAL_DEMO_CONTROLS_ENABLED,
+            })
+            return
+
+        if path == "/api/admin/local-demo":
+            self.handle_local_demo_status()
             return
 
         if path == "/api/support/dashboard":
@@ -797,22 +871,50 @@ class ApiHandler(BaseHTTPRequestHandler):
         except (LotTripNotFoundError, ValueError):
             self.send_v2_lot_trip_not_found(lot_trip_id)
             return
+        self.send_json(_monitoring_snapshot_document(snapshot))
+
+    def handle_local_demo_status(self):
+        if not self.require_admin_user():
+            return
+        if V2_LOCAL_DEMO_SEQUENCE is None:
+            self.send_json(
+                {"error": "Local demo controls are disabled"}, status=404
+            )
+            return
         self.send_json(
             {
-                "success": True,
-                "tripIdentity": serialize_trip_identity(snapshot.trip_identity),
-                "liveState": serialize_live_state(snapshot.live_state),
-                "openAlertCount": snapshot.open_alert_count,
-                "latestAlert": serialize_alert(snapshot.latest_alert),
-                "telemetrySource": snapshot.latest_telemetry_source,
-                "futureRisk": serialize_future_risk(snapshot.future_risk),
-                "futureRisk30m": serialize_future_risk(snapshot.future_risk),
-                "journeyRisk": serialize_journey_risk(snapshot.journey_risk),
-                "operationalDecision": operational_decision_document(
-                    snapshot.operational_decision
+                "demo": V2_LOCAL_DEMO_SEQUENCE.status_document(),
+                "monitoring": _monitoring_snapshot_document(
+                    V2_MONITORING_SERVICE.get_live_snapshot(
+                        V2_PROTOTYPE_TRIP.lot_trip_id
+                    )
                 ),
             }
         )
+
+    def handle_local_demo_next(self):
+        if not self.require_admin_user():
+            return
+        if V2_LOCAL_DEMO_SEQUENCE is None:
+            self.send_json(
+                {"error": "Local demo controls are disabled"}, status=404
+            )
+            return
+        try:
+            result = V2_LOCAL_DEMO_SEQUENCE.advance()
+            self.send_json(
+                {
+                    "result": local_demo_step_result_document(result),
+                    "demo": V2_LOCAL_DEMO_SEQUENCE.status_document(),
+                    "monitoring": _monitoring_snapshot_document(
+                        V2_MONITORING_SERVICE.get_live_snapshot(
+                            V2_PROTOTYPE_TRIP.lot_trip_id
+                        )
+                    ),
+                }
+            )
+        except LocalDemoSequenceError as error:
+            self.send_json({"error": str(error)}, status=409)
 
     def handle_v2_monitor_alerts(self, lot_trip_id):
         if self.require_v2_monitor_access(lot_trip_id) is None:
@@ -1382,6 +1484,23 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+
+def _monitoring_snapshot_document(snapshot):
+    return {
+        "success": True,
+        "tripIdentity": serialize_trip_identity(snapshot.trip_identity),
+        "liveState": serialize_live_state(snapshot.live_state),
+        "openAlertCount": snapshot.open_alert_count,
+        "latestAlert": serialize_alert(snapshot.latest_alert),
+        "telemetrySource": snapshot.latest_telemetry_source,
+        "futureRisk": serialize_future_risk(snapshot.future_risk),
+        "futureRisk30m": serialize_future_risk(snapshot.future_risk),
+        "journeyRisk": serialize_journey_risk(snapshot.journey_risk),
+        "operationalDecision": operational_decision_document(
+            snapshot.operational_decision
+        ),
+    }
 
 
 def run_server():

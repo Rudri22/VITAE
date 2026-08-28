@@ -361,7 +361,15 @@ class TemporalRiskInferenceServiceTests(unittest.TestCase):
         self.assertEqual(result.cutoff_sample_id, record.sample_id)
         self.assertEqual(result.cutoff_at, record.timestamp)
         self.assertEqual(result.adverse_event_probability, 0.3)
+        self.assertLessEqual(len(result.evidence_factors), 4)
+        evidence_codes = {factor.code for factor in result.evidence_factors}
+        self.assertIn("TEMPERATURE_TREND", evidence_codes)
+        self.assertIn("OBSERVATION_SPAN", evidence_codes)
         document = temporal_risk_prediction_document(result)
+        self.assertEqual(
+            {factor["code"] for factor in document["evidenceFactors"]},
+            evidence_codes,
+        )
         self.assertNotIn("riskPolicy", document)
         lowered = {key.lower() for key in document}
         self.assertFalse({"status", "riskband", "risklevel"} & lowered)
